@@ -45,7 +45,7 @@ def write_repo_file(path: str, content: str, message: str, branch: str) -> None:
 # Opening a pull request
 def open_review_pr(branch: str, title: str, body: str, base: str = "main") -> int:
     repo = get_repo()
-    pr = repo.create_pull(title=title, body=body, head=branch, base=base) # Create PR
+    pr = repo.create_pull(title=title, body=body, head=branch, base=base)
     return pr.number # return PR number
 
 # A helper functin to mention this is a TestForge commit
