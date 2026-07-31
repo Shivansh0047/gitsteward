@@ -2,6 +2,8 @@ from github import Github, GithubIntegration
 
 from config import settings
 
+from datetime import datetime, timezone
+
 
 def _load_private_key() -> str: # read .pem file
     with open(settings.github_app_private_key_path, "r") as f:
@@ -53,3 +55,72 @@ def post_commit_comment(sha: str, body: str) -> None:
     repo = get_repo()
     commit = repo.get_commit(sha)
     commit.create_comment(body)
+
+TRACKING_INDEX_PATH = "test-forge-docs/README.md" # To keep a doc of what changed, as a separate history, also can be use as memory for LLM, after cold start of Render
+
+# turns the existing markdown index file's text into a Python dict, so we can update it programmatically.
+def _parse_tracking_rows(content: str) -> dict[str, dict[str, str]]:
+    rows: dict[str, dict[str, str]] = {}
+    blocks = content.split("\n## ")[1:]  # each block = one anchor's section, skip intro text before first "##"
+
+    for block in blocks:
+        lines = block.strip().splitlines()
+        heading = lines[0]  # e.g. "Stack (#stack)"
+        section, anchor = heading.rsplit(" (#", 1)  # split from the right, only on the last " (#"
+        anchor = anchor.rstrip(")")  # drop the trailing ")"
+
+        entry = {"section": section}
+        for line in lines[1:]:
+            if ":" in line:
+                key, value = line.split(":", 1)  # split only on the first ":"
+                entry[key.strip().lower()] = value.strip()
+
+        rows[anchor] = entry
+
+    return rows
+
+# the reverse: turns that dict back into the markdown text we'll write to the file
+def _render_tracking_index(rows: dict[str, dict[str, str]]) -> str:
+    lines = [
+        "# TestForge — Doc Suggestions Index",
+        "",
+        "Auto-generated summary of every README section TestForge has flagged.",
+        "",
+    ]
+    for anchor in sorted(rows):  # sorted = stable, predictable order across runs
+        r = rows[anchor]
+        lines += [
+            f"## {r['section']} (#{anchor})",
+            f"Status: {r['status']}",
+            f"Commit: {r['commit'][:7]}",  # short SHA, matches GitHub's own convention
+            f"Updated: {r['updated']}",
+            "",  # blank line between blocks
+        ]
+    return "\n".join(lines) + "\n"
+
+# fetches the current file (if any), merges in this run's new anchor statuses, and writes the updated file back to the branch.
+def update_tracking_index(anchor_updates: dict[str, str], commit_sha: str, branch: str) -> None:
+    """anchor_updates: {anchor: status}, e.g. {'stack': 'skipped'}"""
+    repo = get_repo()
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    try:
+        existing = repo.get_contents(TRACKING_INDEX_PATH, ref=branch)
+        rows = _parse_tracking_rows(existing.decoded_content.decode())
+    except Exception:
+        rows = {}  # file doesn't exist yet — first run, start fresh
+
+    for anchor, status in anchor_updates.items():  # merge this run's updates into whatever already existed
+        rows[anchor] = {
+            "section": anchor.replace("-", " ").title(),
+            "status": status,
+            "commit": commit_sha,
+            "updated": now,
+        }
+
+    write_repo_file(
+        path=TRACKING_INDEX_PATH,
+        content=_render_tracking_index(rows),
+        message=f"TestForge: update tracking index (push {commit_sha[:7]})",
+        branch=branch,
+    )

@@ -11,6 +11,7 @@ from github_app import (
     get_or_create_review_branch,
     open_review_pr,
     post_commit_comment,
+    update_tracking_index,
     write_repo_file,
 )
 
@@ -79,6 +80,7 @@ def _handle_push(payload: dict) -> None:
             message=f"TestForge: flag #{anchor} (push {sha[:7]})",
             branch=branch,
         )
+    update_tracking_index({a: "skipped" for a in all_anchors}, sha, branch)
 
     if is_new:
         pr_number = open_review_pr(
