@@ -18,7 +18,7 @@ def build_vectorstore() -> Chroma:
         used once, at server startup — not per-request."""
     global _vectorstore
     chunks = chunk_readme()
-    texts = [c["content"] for c in chunks]
+    texts = [f"{c['heading']}\n\n{c['content']}" for c in chunks]  # heading now embedded too, not just stored as metadata
     metadatas = [{"anchor": c["anchor"], "heading": c["heading"]} for c in chunks]
 
     _vectorstore = Chroma.from_texts(
