@@ -12,5 +12,8 @@ class Settings(BaseSettings):
     demo_repo_owner: str = "Shivansh0047"
     demo_repo_name: str = "RAG-Chatbot-Service"
 
+    groq_api_key: str
+    google_api_key: str
+
 
 settings = Settings()

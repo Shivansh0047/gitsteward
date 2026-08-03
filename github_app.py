@@ -35,6 +35,12 @@ def get_or_create_review_branch(base: str = "main") -> tuple[str, bool]:
     repo.create_git_ref(ref=f"refs/heads/{REVIEW_BRANCH}", sha=base_sha)  # Name the branch after pointer of commit of main
     return REVIEW_BRANCH, True
 
+def get_commit_diffs(sha: str) -> dict[str, str]: # Get actual code difference, so LLM can reason Properly
+    """Returns {file_path: unified_diff_patch} for every file changed in this commit."""
+    repo = get_repo()
+    commit = repo.get_commit(sha)
+    return {f.filename: f.patch for f in commit.files if f.patch}  # f.patch is None for binary/huge files
+
 # Writing files onto that branch
 def write_repo_file(path: str, content: str, message: str, branch: str) -> None:
     repo = get_repo()
