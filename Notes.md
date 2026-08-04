@@ -18,7 +18,8 @@ We are using a lib called py github which handles both.
 11. We have now a tracking which which stores the summary of what testforge has done in testforge/README.md, which can alsact as memory for LLM, to counter Renders cold start.
 12. A nice fact why test runs directly in terminal are slow - Every time you run python -c "...", it's a brand new Python process, from scratch, every single time. So you're paying "cold start" cost every single time. This won't be a problem once it's running as a real server. When we run this inside FastAPI via uvicorn, all those imports happen once, at server startup — not per-request.
 13. The retrival was not getting good results, so we shouldn't treat retrieval as the final decision-maker. The right design is: widen k (say, to 6 or 7, instead of 3) so we're less likely to leave out a genuinely relevant section just because its raw vector distance happened to be middling, and then hand all of those candidates — plus the actual code diff — to the LLM, and let it make the real judgment call. Adding Headings to emebddings inproved results as well.
-14. Working of some files
+14. The anchors themselves originate from your actual README's real headings — chunk_readme() reads RAG-Chatbot-Service's real README.md, and _slugify() converts each real ##/### heading into an anchor ("POST /chat" → "post-chat"). Nobody hardcodes these anymore — they're derived live from whatever headings actually exist in the README at the moment we build the vectorstore.
+15. Working of some files
     1. rag/readme_source.py - 
         Fetches and chunks the demo repo's README.md for retrieval.
         fetch_readme(): pulls README.md from GitHub; raises ReadmeNotFoundError
@@ -47,3 +48,11 @@ We are using a lib called py github which handles both.
         Retrieval alone is not the final judge of relevance — see rag/llm.py's
         locate_stale_sections(), which takes retrieval's top candidates and
         lets an LLM make the actual staleness call.
+    3. llm.py - LLM reasoning over code diffs vs README sections.
+        locate_stale_sections(): given a diff, retrieves candidate README
+        sections and asks the LLM which are genuinely stale (not just
+        topically related — that's retrieval's job, this is judgment).
+        rewrite_section(): given a section the LLM flagged as stale, drafts
+        the actual replacement text for just that section.
+        Both share one ChatGroq client (llama-3.3-70b-versatile, temperature=0
+        for consistent, non-creative judgments).
