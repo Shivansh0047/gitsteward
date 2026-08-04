@@ -11,7 +11,7 @@ def _load_private_key() -> str: # read .pem file
 
 
 def get_installation_client() -> Github:
-    integration = GithubIntegration(settings.github_app_id, _load_private_key()) # Object of TestForge, the App, signs jwt token
+    integration = GithubIntegration(settings.github_app_id, _load_private_key()) # Object of GitSteward, the App, signs jwt token
     access_token = integration.get_access_token(settings.github_installation_id) # Exchnage KWT for real token
     return Github(access_token.token) # A normal PyGithub client already authicanted
 
@@ -21,7 +21,7 @@ def get_repo():
     return client.get_repo(f"{settings.demo_repo_owner}/{settings.demo_repo_name}")
 
 
-REVIEW_BRANCH = "test-forge/doc-suggestions"
+REVIEW_BRANCH = "gitsteward/doc-suggestions"
 
 # Create new revier branch or get the old one
 def get_or_create_review_branch(base: str = "main") -> tuple[str, bool]:
@@ -56,13 +56,13 @@ def open_review_pr(branch: str, title: str, body: str, base: str = "main") -> in
     pr = repo.create_pull(title=title, body=body, head=branch, base=base)
     return pr.number # return PR number
 
-# A helper functin to mention this is a TestForge commit
+# A helper functin to mention this is a GitSteward commit
 def post_commit_comment(sha: str, body: str) -> None:
     repo = get_repo()
     commit = repo.get_commit(sha)
     commit.create_comment(body)
 
-TRACKING_INDEX_PATH = "test-forge-docs/README.md" # To keep a doc of what changed, as a separate history, also can be use as memory for LLM, after cold start of Render
+TRACKING_INDEX_PATH = "gitsteward-docs/README.md" # To keep a doc of what changed, as a separate history, also can be use as memory for LLM, after cold start of Render
 
 # turns the existing markdown index file's text into a Python dict, so we can update it programmatically.
 def _parse_tracking_rows(content: str) -> dict[str, dict[str, str]]:
@@ -88,9 +88,9 @@ def _parse_tracking_rows(content: str) -> dict[str, dict[str, str]]:
 # the reverse: turns that dict back into the markdown text we'll write to the file
 def _render_tracking_index(rows: dict[str, dict[str, str]]) -> str:
     lines = [
-        "# TestForge — Doc Suggestions Index",
+        "# GitSteward — Doc Suggestions Index",
         "",
-        "Auto-generated summary of every README section TestForge has flagged.",
+        "Auto-generated summary of every README section GitSteward has flagged.",
         "",
     ]
     for anchor in sorted(rows):  # sorted = stable, predictable order across runs
@@ -127,6 +127,6 @@ def update_tracking_index(anchor_updates: dict[str, str], commit_sha: str, branc
     write_repo_file(
         path=TRACKING_INDEX_PATH,
         content=_render_tracking_index(rows),
-        message=f"TestForge: update tracking index (push {commit_sha[:7]})",
+        message=f"GitSteward: update tracking index (push {commit_sha[:7]})",
         branch=branch,
     )

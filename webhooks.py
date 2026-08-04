@@ -17,7 +17,7 @@ from github_app import (
 
 # A named logger for this file specifically — lets us filter/identify
 # log lines as coming from "testforge.webhooks" rather than just "root"
-logger = logging.getLogger("testforge.webhooks")
+logger = logging.getLogger("gitsteward.webhooks")
 router = APIRouter() # A separate router object
 
 
@@ -63,7 +63,7 @@ def _handle_push(payload: dict) -> None:
 
     branch, is_new = get_or_create_review_branch()
     logger.info("Using review branch '%s' (new=%s)", branch, is_new)
-    # For every unique anchor, builds the placeholder markdown (with front-matter: which section, which commit triggered it, status) and writes it to test-forge-docs/<anchor>.md on that branch.
+    # For every unique anchor, builds the placeholder markdown (with front-matter: which section, which commit triggered it, status) and writes it to gitsteward-docs/<anchor>.md on that branch.
     for anchor in sorted(all_anchors):
         content = (
             "---\n"
@@ -75,9 +75,9 @@ def _handle_push(payload: dict) -> None:
             "No AI reasoning yet — Phase 1 pattern-matching only.\n"
         )
         write_repo_file(
-            path=f"test-forge-docs/{anchor}.md",
+            path=f"gitsteward-docs/{anchor}.md",
             content=content,
-            message=f"TestForge: flag #{anchor} (push {sha[:7]})",
+            message=f"GitSteward: flag #{anchor} (push {sha[:7]})",
             branch=branch,
         )
     update_tracking_index({a: "skipped" for a in all_anchors}, sha, branch)
@@ -85,14 +85,14 @@ def _handle_push(payload: dict) -> None:
     if is_new:
         pr_number = open_review_pr(
             branch,
-            title="TestForge: doc suggestions",
-            body="Automated suggestions for potentially stale README sections. Review each file under `test-forge-docs/` and merge or close.",
+            title="GitSteward: doc suggestions",
+            body="Automated suggestions for potentially stale README sections. Review each file under `gitsteward-docs/` and merge or close.",
         )
         logger.info("Opened new PR #%s", pr_number)
-        comment = f"TestForge opened PR #{pr_number} for review — {len(all_anchors)} section(s) flagged."
+        comment = f"GitSteward opened PR #{pr_number} for review — {len(all_anchors)} section(s) flagged."
     else:
         logger.info("Updated existing open PR's branch.")
-        comment = f"TestForge updated its open review PR — {len(all_anchors)} section(s) flagged."
+        comment = f"GitSteward updated its open review PR — {len(all_anchors)} section(s) flagged."
 
     post_commit_comment(sha, comment)
 

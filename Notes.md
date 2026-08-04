@@ -56,3 +56,5 @@ We are using a lib called py github which handles both.
         the actual replacement text for just that section.
         Both share one ChatGroq client (llama-3.3-70b-versatile, temperature=0
         for consistent, non-creative judgments).
+
+16. Changed the project name to gitsteward.
