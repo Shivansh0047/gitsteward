@@ -48,6 +48,12 @@ def _get_changed_files(payload: dict) -> list[str]:
 
 # This function gets changed files, run through the real LLM pipeline now (was match_anchors())
 def _handle_push(payload: dict) -> None:
+
+    ref = payload.get("ref", "") # guard against self loop
+    if ref != "refs/heads/main":
+        logger.info("Push to '%s', not main — ignoring (likely our own review branch).", ref)
+        return
+
     sha = payload.get("after")
     changed_files = _get_changed_files(payload)
     logger.info("Push %s touched %d file(s): %s", sha, len(changed_files), changed_files) # debug check
