@@ -7,14 +7,15 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from config import settings
 
 from github_app import (
-    get_commit_diffs, 
+    commit_multiple_files,     # replaces write_repo_file for batched writes
+    build_tracking_index_content,  # replaces update_tracking_index
+    get_commit_diffs,
     get_or_create_review_branch,
     open_review_pr,
     post_commit_comment,
-    update_tracking_index,
-    write_repo_file,
 )
 from rag.llm import analyze_push_diffs, rewrite_merged_section  # real LLM reasoning, replaces hardcoded doc_rules
+from rag.readme_source import build_full_readme_preview  # new
 
 # A named logger for this file specifically — lets us filter/identify
 # log lines as coming from "testforge.webhooks" rather than just "root"
@@ -70,31 +71,35 @@ def _handle_push(payload: dict) -> None:
 
     anchor_updates: dict[str, str] = {}     # replaces the old all_anchors set
     anchor_summaries: dict[str, str] = {}   # feeds the tracking index's Summary field
+    rewritten_by_anchor: dict[str, str] = {}
+    files_to_commit: dict[str, str] = {}  # everything we're about to write, batched into ONE commit
 
-    # For every stale anchor the LLM found, write the REAL rewritten markdown (was placeholder text) to gitsteward-docs/<anchor>.md on that branch.
+    # For every stale anchor the LLM found, write the REAL rewritten markdown (was placeholder text) to gitsteward-docs/<anchor>.md on that branch and batch all together
     for anchor, section in merged.items():
-        rewritten = rewrite_merged_section(section)  # actual LLM-drafted section text
-        summary = " / ".join(section["reasons"])       # combined reasons across all contributing files
+        rewritten = rewrite_merged_section(section) # actual LLM-drafted section text
+        summary = " / ".join(section["reasons"])  # combined reasons across all contributing files
 
         content = (
             "---\n"
             f"source_anchor: \"README.md#{anchor}\"\n"
             f"source_commit: \"{sha}\"\n"
-            "status: \"updated\"\n"                    
+            "status: \"updated\"\n"
             "---\n\n"
-            f"**Why flagged:** {summary}\n\n"            # short explanation line
-            f"{rewritten}\n"                              # real content
+            f"**Why flagged:** {summary}\n\n" # short explanation line
+            f"{rewritten}\n" # real content
         )
-        write_repo_file(
-            path=f"gitsteward-docs/{anchor}.md",
-            content=content,
-            message=f"GitSteward: update #{anchor} (push {sha[:7]})", 
-            branch=branch,
-        )
-        anchor_updates[anchor] = "updated"       
-        anchor_summaries[anchor] = summary        
+        files_to_commit[f"gitsteward-docs/{anchor}.md"] = content
 
-    update_tracking_index(anchor_updates, sha, branch, summaries=anchor_summaries) 
+        anchor_updates[anchor] = "updated"
+        anchor_summaries[anchor] = summary
+        rewritten_by_anchor[anchor] = rewritten
+
+    files_to_commit["gitsteward-docs/modified_gitsteward_readme.md"] = build_full_readme_preview(rewritten_by_anchor)
+    files_to_commit["gitsteward-docs/README.md"] = build_tracking_index_content(anchor_updates, sha, branch, summaries=anchor_summaries)
+
+    # ONE commit, containing every file above — must happen BEFORE opening the PR,
+    # since a brand-new branch has zero diff from main until this runs
+    commit_multiple_files(branch, files_to_commit, message=f"GitSteward: update {len(merged)} section(s) (push {sha[:7]})")
 
     if is_new:
         pr_number = open_review_pr(

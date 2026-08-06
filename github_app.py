@@ -4,6 +4,23 @@ from config import settings
 
 from datetime import datetime, timezone
 
+from github import InputGitTreeElement  # needed for batched multi-file commits
+
+# To commit many files
+def commit_multiple_files(branch: str, files: dict[str, str], message: str) -> None:
+    """Writes several files in ONE commit, instead of one commit per file."""
+    repo = get_repo()
+    ref = repo.get_git_ref(f"heads/{branch}")
+    base_commit = repo.get_git_commit(ref.object.sha)  # current tip of the branch
+
+    elements = []
+    for path, content in files.items():
+        blob = repo.create_git_blob(content, "utf-8")  # raw file content, not yet attached anywhere
+        elements.append(InputGitTreeElement(path=path, mode="100644", type="blob", sha=blob.sha))
+
+    new_tree = repo.create_git_tree(elements, base_tree=base_commit.tree)  # snapshot of all files together
+    new_commit = repo.create_git_commit(message, new_tree, [base_commit])  # one commit, parent = old tip
+    ref.edit(new_commit.sha)  # move the branch pointer forward to the new commit
 
 def _load_private_key() -> str: # read .pem file
     with open(settings.github_app_private_key_path, "r") as f:
@@ -40,15 +57,6 @@ def get_commit_diffs(sha: str) -> dict[str, str]: # Get actual code difference, 
     repo = get_repo()
     commit = repo.get_commit(sha)
     return {f.filename: f.patch for f in commit.files if f.patch}  # f.patch is None for binary/huge files
-
-# Writing files onto that branch
-def write_repo_file(path: str, content: str, message: str, branch: str) -> None:
-    repo = get_repo()
-    try:
-        existing = repo.get_contents(path, ref=branch) # Get file
-        repo.update_file(path, message, content, existing.sha, branch=branch) # Update the file
-    except Exception:
-        repo.create_file(path, message, content, branch=branch) # Create new file if it doesnt exist
 
 # Opening a pull request
 def open_review_pr(branch: str, title: str, body: str, base: str = "main") -> int:
@@ -105,14 +113,8 @@ def _render_tracking_index(rows: dict[str, dict[str, str]]) -> str:
         ]
     return "\n".join(lines) + "\n"
 
-# fetches the current file (if any), merges in this run's new anchor statuses, and writes the updated file back to the branch.
-def update_tracking_index(
-    anchor_updates: dict[str, str],
-    commit_sha: str,
-    branch: str,
-    summaries: dict[str, str] | None = None,   # new, optional
-) -> None:
-    """anchor_updates: {anchor: status}. summaries: {anchor: short reason text}"""
+def build_tracking_index_content(anchor_updates: dict[str, str], commit_sha: str, branch: str, summaries: dict[str, str] | None = None) -> str:
+    """fetches the current file (if any), merges in this run's new anchor statuses, returns the content instead of writing it — caller batches the write."""
     summaries = summaries or {}
     repo = get_repo()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -121,9 +123,9 @@ def update_tracking_index(
         existing = repo.get_contents(TRACKING_INDEX_PATH, ref=branch)
         rows = _parse_tracking_rows(existing.decoded_content.decode())
     except Exception:
-        rows = {} # file doesn't exist yet — first run, start fresh
+        rows = {}
 
-    for anchor, status in anchor_updates.items():  # merge this run's updates into whatever already existed
+    for anchor, status in anchor_updates.items():
         rows[anchor] = {
             "section": anchor.replace("-", " ").title(),
             "status": status,
@@ -132,9 +134,4 @@ def update_tracking_index(
             "summary": summaries.get(anchor, "-"),
         }
 
-    write_repo_file(
-        path=TRACKING_INDEX_PATH,
-        content=_render_tracking_index(rows),
-        message=f"GitSteward: update tracking index (push {commit_sha[:7]})",
-        branch=branch,
-    )
+    return _render_tracking_index(rows)  # just return it now, don't write

@@ -58,4 +58,7 @@ We are using a lib called py github which handles both.
         for consistent, non-creative judgments).
 
 16. Changed the project name to gitsteward.
-17. A patch file (usually ending in .patch or .diff) is a plain text file that describes the exact line-by-line code changes made between two commits
+17. A patch file (usually ending in .patch or .diff) is a plain text file that describes the exact line-by-line code changes made between two commits.
+19. Right now we are making many commits by default, for a single chnage, instead it would be better if we make only one commit. The isse is this is how github's API works, so instead we low level InputGitTreeElement, which is exactly what vs code uses.
+20. a blob is just raw file content with no name attached yet. A tree is what actually maps paths ("gitsteward-docs/stack.md") to blobs — it's the real "directory listing" a commit points to. We build blobs for every file we're touching, assemble one tree containing all of them (layered on top of the branch's existing tree via base_tree=), then create exactly one commit pointing at that tree, and move the branch's pointer (ref.edit(...)) to it. This is precisely what a normal git commit with multiple staged files does under the hood — we're just doing it directly through the API.
+21. 
