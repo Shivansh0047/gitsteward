@@ -58,3 +58,4 @@ We are using a lib called py github which handles both.
         for consistent, non-creative judgments).
 
 16. Changed the project name to gitsteward.
+17. A patch file (usually ending in .patch or .diff) is a plain text file that describes the exact line-by-line code changes made between two commits

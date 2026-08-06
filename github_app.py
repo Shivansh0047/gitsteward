@@ -93,20 +93,27 @@ def _render_tracking_index(rows: dict[str, dict[str, str]]) -> str:
         "Auto-generated summary of every README section GitSteward has flagged.",
         "",
     ]
-    for anchor in sorted(rows):  # sorted = stable, predictable order across runs
+    for anchor in sorted(rows): # sorted = stable, predictable order across runs
         r = rows[anchor]
         lines += [
             f"## {r['section']} (#{anchor})",
             f"Status: {r['status']}",
-            f"Commit: {r['commit'][:7]}",  # short SHA, matches GitHub's own convention
+            f"Commit: {r['commit'][:7]}", # short SHA, matches GitHub's own convention
             f"Updated: {r['updated']}",
-            "",  # blank line between blocks
+            f"Summary: {r.get('summary', '-')}",   # new — placeholder "-" for old entries missing it
+            "", # blank line between blocks
         ]
     return "\n".join(lines) + "\n"
 
 # fetches the current file (if any), merges in this run's new anchor statuses, and writes the updated file back to the branch.
-def update_tracking_index(anchor_updates: dict[str, str], commit_sha: str, branch: str) -> None:
-    """anchor_updates: {anchor: status}, e.g. {'stack': 'skipped'}"""
+def update_tracking_index(
+    anchor_updates: dict[str, str],
+    commit_sha: str,
+    branch: str,
+    summaries: dict[str, str] | None = None,   # new, optional
+) -> None:
+    """anchor_updates: {anchor: status}. summaries: {anchor: short reason text}"""
+    summaries = summaries or {}
     repo = get_repo()
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -114,7 +121,7 @@ def update_tracking_index(anchor_updates: dict[str, str], commit_sha: str, branc
         existing = repo.get_contents(TRACKING_INDEX_PATH, ref=branch)
         rows = _parse_tracking_rows(existing.decoded_content.decode())
     except Exception:
-        rows = {}  # file doesn't exist yet — first run, start fresh
+        rows = {} # file doesn't exist yet — first run, start fresh
 
     for anchor, status in anchor_updates.items():  # merge this run's updates into whatever already existed
         rows[anchor] = {
@@ -122,6 +129,7 @@ def update_tracking_index(anchor_updates: dict[str, str], commit_sha: str, branc
             "status": status,
             "commit": commit_sha,
             "updated": now,
+            "summary": summaries.get(anchor, "-"),
         }
 
     write_repo_file(

@@ -6,14 +6,15 @@ from fastapi import APIRouter, Header, HTTPException, Request
 
 from config import settings
 
-from doc_rules import match_anchors
 from github_app import (
+    get_commit_diffs, 
     get_or_create_review_branch,
     open_review_pr,
     post_commit_comment,
     update_tracking_index,
     write_repo_file,
 )
+from rag.llm import analyze_push_diffs, rewrite_merged_section  # real LLM reasoning, replaces hardcoded doc_rules
 
 # A named logger for this file specifically — lets us filter/identify
 # log lines as coming from "testforge.webhooks" rather than just "root"
@@ -44,43 +45,56 @@ def _get_changed_files(payload: dict) -> list[str]:
         changed.update(commit.get("removed", []))
     return sorted(changed)
 
-# This function gets changed files, run through match_anchors()
+# This function gets changed files, run through the real LLM pipeline now (was match_anchors())
 def _handle_push(payload: dict) -> None:
     sha = payload.get("after")
     changed_files = _get_changed_files(payload)
     logger.info("Push %s touched %d file(s): %s", sha, len(changed_files), changed_files) # debug check
 
-    file_to_anchors = match_anchors(changed_files)
-
-    if not file_to_anchors:
-        logger.info("No matched README sections for this push — nothing to do.")
+    if not changed_files:
+        logger.info("No changed files — nothing to do.")  # early exit, no diffs to fetch as github send empty patch file
         return
 
-    # Collect every unique anchor across all matched files
-    all_anchors: set[str] = set()
-    for anchors in file_to_anchors.values():
-        all_anchors.update(anchors)
+    diffs = get_commit_diffs(sha)  # new — {file_path: unified_diff_patch}, real diff text for the LLM
+    if not diffs:
+        logger.info("No usable diffs for this push (binary/huge files only?) — nothing to do.")  # new
+        return
+
+    merged = analyze_push_diffs(diffs)  # replaces match_anchors(); {anchor: {heading, original_content, reasons, diffs}}
+    if not merged:
+        logger.info("LLM found no stale sections for this push — nothing to do.")  # new — same guard, new source
+        return
 
     branch, is_new = get_or_create_review_branch()
     logger.info("Using review branch '%s' (new=%s)", branch, is_new)
-    # For every unique anchor, builds the placeholder markdown (with front-matter: which section, which commit triggered it, status) and writes it to gitsteward-docs/<anchor>.md on that branch.
-    for anchor in sorted(all_anchors):
+
+    anchor_updates: dict[str, str] = {}     # replaces the old all_anchors set
+    anchor_summaries: dict[str, str] = {}   # feeds the tracking index's Summary field
+
+    # For every stale anchor the LLM found, write the REAL rewritten markdown (was placeholder text) to gitsteward-docs/<anchor>.md on that branch.
+    for anchor, section in merged.items():
+        rewritten = rewrite_merged_section(section)  # actual LLM-drafted section text
+        summary = " / ".join(section["reasons"])       # combined reasons across all contributing files
+
         content = (
             "---\n"
             f"source_anchor: \"README.md#{anchor}\"\n"
             f"source_commit: \"{sha}\"\n"
-            "status: \"skipped\"\n"
+            "status: \"updated\"\n"                    
             "---\n\n"
-            f"This commit touched files that may affect the `#{anchor}` section. "
-            "No AI reasoning yet — Phase 1 pattern-matching only.\n"
+            f"**Why flagged:** {summary}\n\n"            # short explanation line
+            f"{rewritten}\n"                              # real content
         )
         write_repo_file(
             path=f"gitsteward-docs/{anchor}.md",
             content=content,
-            message=f"GitSteward: flag #{anchor} (push {sha[:7]})",
+            message=f"GitSteward: update #{anchor} (push {sha[:7]})", 
             branch=branch,
         )
-    update_tracking_index({a: "skipped" for a in all_anchors}, sha, branch)
+        anchor_updates[anchor] = "updated"       
+        anchor_summaries[anchor] = summary        
+
+    update_tracking_index(anchor_updates, sha, branch, summaries=anchor_summaries) 
 
     if is_new:
         pr_number = open_review_pr(
@@ -89,10 +103,10 @@ def _handle_push(payload: dict) -> None:
             body="Automated suggestions for potentially stale README sections. Review each file under `gitsteward-docs/` and merge or close.",
         )
         logger.info("Opened new PR #%s", pr_number)
-        comment = f"GitSteward opened PR #{pr_number} for review — {len(all_anchors)} section(s) flagged."
+        comment = f"GitSteward opened PR #{pr_number} for review — {len(merged)} section(s) flagged."  # len(merged) not len(all_anchors)
     else:
         logger.info("Updated existing open PR's branch.")
-        comment = f"GitSteward updated its open review PR — {len(all_anchors)} section(s) flagged."
+        comment = f"GitSteward updated its open review PR — {len(merged)} section(s) flagged."
 
     post_commit_comment(sha, comment)
 
