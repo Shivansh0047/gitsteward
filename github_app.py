@@ -1,5 +1,5 @@
 from github import Github, GithubIntegration
-
+from github import GithubException  # need this to catch the specific "branch not found" error
 from config import settings
 
 from datetime import datetime, timezone
@@ -47,6 +47,15 @@ def get_or_create_review_branch(base: str = "main") -> tuple[str, bool]:
     open_prs = repo.get_pulls(state="open", head=f"{repo.owner.login}:{REVIEW_BRANCH}") # Check if there is some brnch which alread exicts
     for pr in open_prs:
         return REVIEW_BRANCH, False  # reuse — already open, just add to it
+
+    # no open PR, but does the branch itself still exist (leftover from a
+    # merged/closed PR that was never cleaned up)? If so, delete it so we can
+    # safely create a fresh one below — a stale branch with no open PR is dead weight.
+    try:
+        stale_ref = repo.get_git_ref(f"heads/{REVIEW_BRANCH}")
+        stale_ref.delete()  # remove the leftover branch before recreating it
+    except GithubException:
+        pass  # branch genuinely doesn't exist — nothing to clean up, that's fine
 
     base_sha = repo.get_branch(base).commit.sha  # where main currently points
     repo.create_git_ref(ref=f"refs/heads/{REVIEW_BRANCH}", sha=base_sha)  # Name the branch after pointer of commit of main
