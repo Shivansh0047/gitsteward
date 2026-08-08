@@ -2,8 +2,9 @@ from typing import TypedDict, Literal
 
 class SectionResult(TypedDict):
     anchor: str
-    status: Literal["updated", "not_stale"]
+    status: Literal["updated", "not_stale", "skipped"]
     reasons: list[str]
+    content: str  # the rewritten section text — new field, needed so a later node can build the commit  
 
 class WorkflowState(TypedDict):
     run_id: str                    # the triggering commit SHA — also our thread_id for checkpointing
@@ -14,3 +15,4 @@ class WorkflowState(TypedDict):
     branch: str | None              # review branch name, once determined
     pr_number: int | None           # set once the PR is opened
     status: Literal["running", "waiting_approval", "done"]
+    merged_result: bool | None   # carries the human's approve/reject decision from await_review to finalize

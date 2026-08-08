@@ -46,7 +46,7 @@ def get_or_create_review_branch(base: str = "main") -> tuple[str, bool]:
 
     open_prs = repo.get_pulls(state="open", head=f"{repo.owner.login}:{REVIEW_BRANCH}") # Check if there is some brnch which alread exicts
     for pr in open_prs:
-        return REVIEW_BRANCH, False  # reuse — already open, just add to it
+        return REVIEW_BRANCH, False, pr.number  # reuse — already open, just add to it, also returns pr number to be used later
 
     # no open PR, but does the branch itself still exist (leftover from a
     # merged/closed PR that was never cleaned up)? If so, delete it so we can
@@ -59,7 +59,7 @@ def get_or_create_review_branch(base: str = "main") -> tuple[str, bool]:
 
     base_sha = repo.get_branch(base).commit.sha  # where main currently points
     repo.create_git_ref(ref=f"refs/heads/{REVIEW_BRANCH}", sha=base_sha)  # Name the branch after pointer of commit of main
-    return REVIEW_BRANCH, True
+    return REVIEW_BRANCH, True, None
 
 def get_commit_diffs(sha: str) -> dict[str, str]: # Get actual code difference, so LLM can reason Properly
     """Returns {file_path: unified_diff_patch} for every file changed in this commit."""
