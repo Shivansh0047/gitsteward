@@ -1,6 +1,8 @@
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt
 
+from graph.pr_tracking import record_pr_run
+
 from graph.state import WorkflowState
 from rag.llm import analyze_push_diffs, rewrite_merged_section
 from rag.readme_source import build_full_readme_preview
@@ -74,6 +76,7 @@ def commit_and_open_pr_node(state: WorkflowState) -> dict:
         pr_number = existing_pr_number  # real, fetched from GitHub — not guessed from state
         comment = f"GitSteward updated its open review PR — {len(state['section_results'])} section(s) flagged."
 
+    record_pr_run(state["repo"], pr_number, state["run_id"])   # link this run to its PR
     post_commit_comment(state["run_id"], comment)
 
     return {"branch": branch, "pr_number": pr_number, "status": "waiting_approval"}
