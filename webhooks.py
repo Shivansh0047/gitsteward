@@ -14,7 +14,7 @@ from github_app import (
     open_review_pr,
     post_commit_comment,
 )
-from rag.llm import analyze_push_diffs, rewrite_merged_section  # real LLM reasoning, replaces hardcoded doc_rules
+from rag.llm import analyze_push_diffs, rewrite_merged_section  # real LLM reasoning
 from rag.readme_source import build_full_readme_preview  # new
 
 # A named logger for this file specifically — lets us filter/identify
@@ -62,14 +62,14 @@ def _handle_push(payload: dict) -> None:
         logger.info("No changed files — nothing to do.")  # early exit, no diffs to fetch as github send empty patch file
         return
 
-    diffs = get_commit_diffs(sha)  # new — {file_path: unified_diff_patch}, real diff text for the LLM
+    diffs = get_commit_diffs(sha)  # {file_path: unified_diff_patch}, real diff text for the LLM
     if not diffs:
-        logger.info("No usable diffs for this push (binary/huge files only?) — nothing to do.")  # new
+        logger.info("No usable diffs for this push (binary/huge files only?) — nothing to do.")
         return
 
     merged = analyze_push_diffs(diffs)  # replaces match_anchors(); {anchor: {heading, original_content, reasons, diffs}}
     if not merged:
-        logger.info("LLM found no stale sections for this push — nothing to do.")  # new — same guard, new source
+        logger.info("LLM found no stale sections for this push — nothing to do.")  # same guard, new source
         return
 
     branch, is_new = get_or_create_review_branch()
