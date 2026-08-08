@@ -16,3 +16,4 @@ class WorkflowState(TypedDict):
     pr_number: int | None           # set once the PR is opened
     status: Literal["running", "waiting_approval", "done"]
     merged_result: bool | None   # carries the human's approve/reject decision from await_review to finalize
+    is_new_branch: bool | None   # determined once, up front, by resolve_branch_node

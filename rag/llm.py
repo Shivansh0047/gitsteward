@@ -4,6 +4,7 @@ from langchain_groq import ChatGroq
 
 from config import settings
 from rag.embeddings import retrieve_relevant_sections
+from github_app import get_existing_suggestion_content 
 
 _llm: ChatGroq | None = None
 
@@ -44,8 +45,14 @@ Do not repeat the heading itself — just the body text.
 Respond with the rewritten text only — no preamble, no explanation, no markdown code fences.
 """
 
-def locate_stale_sections(file_path: str, diff: str) -> list[dict]:
+def locate_stale_sections(file_path: str, diff: str, branch: str | None = None) -> list[dict]:
     candidates = retrieve_relevant_sections(diff, k=6)
+
+    for c in candidates:
+        existing = get_existing_suggestion_content(c["anchor"], branch)
+        if existing:
+            c["content"] = existing  # prefer tier 1/2 over the raw README section
+
     # keep full candidate objects around, keyed by anchor — rewrite_section needs original_content later
     candidates_by_anchor = {c["anchor"]: c for c in candidates} # mapping anchor → full candidate object
 
@@ -86,7 +93,7 @@ def rewrite_section(file_path: str, diff: str, stale_section: dict) -> str:
     response = _get_llm().invoke(prompt)
     return response.content.strip()
 
-def analyze_push_diffs(diffs: dict[str, str]) -> dict[str, dict]:
+def analyze_push_diffs(diffs: dict[str, str], branch: str | None = None) -> dict[str, dict]:
     """
     Runs locate_stale_sections() once per changed file, then merges
     results by anchor — if two files both flag the same section, we
@@ -96,7 +103,7 @@ def analyze_push_diffs(diffs: dict[str, str]) -> dict[str, dict]:
     merged: dict[str, dict] = {}
 
     for file_path, diff in diffs.items():
-        for section in locate_stale_sections(file_path, diff):
+        for section in locate_stale_sections(file_path, diff, branch=branch):  # pass branch through
             anchor = section["anchor"]
             if anchor not in merged:
                 merged[anchor] = {

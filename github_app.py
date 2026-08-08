@@ -41,7 +41,7 @@ def get_repo():
 REVIEW_BRANCH = "gitsteward/doc-suggestions"
 
 # Create new revier branch or get the old one
-def get_or_create_review_branch(base: str = "main") -> tuple[str, bool]:
+def get_or_create_review_branch(base: str = "main") -> tuple[str, bool, int | None]:
     repo = get_repo()
 
     open_prs = repo.get_pulls(state="open", head=f"{repo.owner.login}:{REVIEW_BRANCH}") # Check if there is some brnch which alread exicts
@@ -144,3 +144,25 @@ def build_tracking_index_content(anchor_updates: dict[str, str], commit_sha: str
         }
 
     return _render_tracking_index(rows)  # just return it now, don't write
+
+def get_existing_suggestion_content(anchor: str, branch: str | None) -> str | None:
+    """Tier 1: current open branch's version (if any). Tier 2: main's
+    already-merged version (if any). Returns None if neither exists —
+    caller falls back to the raw README.md section (tier 3)."""
+    repo = get_repo()
+    refs_to_try = ([branch] if branch else []) + ["main"]
+
+    for ref in refs_to_try:
+        try:
+            existing = repo.get_contents(f"gitsteward-docs/{anchor}.md", ref=ref)
+        except Exception:
+            continue  # doesn't exist at this tier, try the next one
+
+        raw = existing.decoded_content.decode()
+        parts = raw.split("---", 2)  # our files: ---\n<frontmatter>\n---\n\n<body>
+        body = parts[2] if len(parts) >= 3 else raw
+        if body.strip().startswith("**Why flagged:**"):
+            body = body.split("\n\n", 1)[1] if "\n\n" in body else body
+        return body.strip()
+
+    return None

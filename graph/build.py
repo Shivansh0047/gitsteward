@@ -14,12 +14,21 @@ from github_app import (
     build_tracking_index_content,
 )
 
+def resolve_branch_node(state: WorkflowState) -> dict:
+    """Runs FIRST, before any LLM reasoning — so analyze_node knows which
+    branch (if any) to check for already-proposed content."""
+    branch, is_new, existing_pr_number = get_or_create_review_branch()
+    return {
+        "branch": branch,
+        "is_new_branch": is_new,
+        "pr_number": None if is_new else existing_pr_number,
+    }
 
 def analyze_node(state: WorkflowState) -> dict:
     """Run the LLM reasoning, same logic as before — just now it
     READS from state (state['diffs']) instead of a function parameter,
     and RETURNS a dict of updates instead of directly writing files."""
-    merged = analyze_push_diffs(state["diffs"])
+    merged = analyze_push_diffs(state["diffs"], branch=state.get("branch"))  # branch now available
 
     section_results = {}
     for anchor, section in merged.items():
@@ -39,7 +48,8 @@ def commit_and_open_pr_node(state: WorkflowState) -> dict:
     if not state["section_results"]:
         return {"status": "done"}  # nothing to propose, skip straight to done
 
-    branch, is_new, existing_pr_number  = get_or_create_review_branch()
+    branch = state["branch"]          # already resolved, no need to call get_or_create_review_branch again
+    is_new = state["is_new_branch"]
 
     files_to_commit = {}
     rewritten_by_anchor = {}
@@ -73,7 +83,7 @@ def commit_and_open_pr_node(state: WorkflowState) -> dict:
         )
         comment = f"GitSteward opened PR #{pr_number} for review — {len(state['section_results'])} section(s) flagged."
     else:
-        pr_number = existing_pr_number  # real, fetched from GitHub — not guessed from state
+        pr_number = state["pr_number"]  # already fetched in resolve_branch_node
         comment = f"GitSteward updated its open review PR — {len(state['section_results'])} section(s) flagged."
 
     record_pr_run(state["repo"], pr_number, state["run_id"])   # link this run to its PR
@@ -113,12 +123,14 @@ def finalize_node(state: WorkflowState) -> dict:
 
 def build_graph():
     builder = StateGraph(WorkflowState)
+    builder.add_node("resolve_branch", resolve_branch_node)   # runs first now
     builder.add_node("analyze", analyze_node)
     builder.add_node("commit_and_pr", commit_and_open_pr_node)
     builder.add_node("await_review", await_review_node)
     builder.add_node("finalize", finalize_node)
 
-    builder.add_edge(START, "analyze")
+    builder.add_edge(START, "resolve_branch")
+    builder.add_edge("resolve_branch", "analyze")
     builder.add_edge("analyze", "commit_and_pr")
     builder.add_edge("commit_and_pr", "await_review")
     builder.add_edge("await_review", "finalize")
