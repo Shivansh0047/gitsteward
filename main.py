@@ -8,6 +8,8 @@ from rag.embeddings import build_vectorstore
 from graph.runtime import _get_compiled_graph
 from graph.pr_tracking import ensure_table
 
+from observability import router as observability_router
+
 logging.basicConfig(level=logging.INFO) # This turns logging output on so we can actually see it in the terminal.
 logger = logging.getLogger("gitsteward.startup")
 
@@ -24,6 +26,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="GitSteward", lifespan=lifespan)
 app.include_router(webhooks_router) # merges the routes we defined in webhooks.py into our main app
+app.include_router(observability_router) # include the observability router
 
 @app.get("/health")
 async def health():

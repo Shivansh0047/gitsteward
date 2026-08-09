@@ -44,3 +44,29 @@ def resume_run(repo: str, run_id: str, merged: bool) -> dict:
     graph = _get_compiled_graph()
     config = {"configurable": {"thread_id": _make_thread_id(repo, run_id)}} # Get prev thread_id, safe as it is deterministic
     return graph.invoke(Command(resume=merged), config)
+
+def get_run_state(repo: str, run_id: str) -> dict | None:
+    """Fetches the current state of a run directly from the checkpointer,
+    without needing to resume it — just a read, not an action."""
+    graph = _get_compiled_graph()
+    config = {"configurable": {"thread_id": _make_thread_id(repo, run_id)}}
+    snapshot = graph.get_state(config)
+    if not snapshot.values:
+        return None  # no checkpoint exists for this thread at all
+    return snapshot.values
+
+
+def get_run_timeline(repo: str, run_id: str) -> list[dict]:
+    """Full history of every checkpoint saved for this run — each step
+    the graph passed through, in order."""
+    graph = _get_compiled_graph()
+    config = {"configurable": {"thread_id": _make_thread_id(repo, run_id)}}
+    history = list(graph.get_state_history(config))
+    return [
+        {
+            "step": h.metadata.get("step"),
+            "status": h.values.get("status"),
+            "next_node": h.next,
+        }
+        for h in reversed(history)  # oldest first, reads like a timeline
+    ]
