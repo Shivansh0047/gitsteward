@@ -11,6 +11,7 @@ from graph.runtime import start_run, resume_run  # replaces the manual analyze/c
 from graph.pr_tracking import get_runs_for_pr  # looks up which run(s) a closed PR belongs to
 from graph.repo_registry import register_repo  # new — auto-registers a repo the first time we see it
 from rag.vectorstore import refresh_docs_store  # new — used to sync the docs-main store after a merge
+from rag.readme_source import ReadmeNotFoundError
 
 # A named logger for this file specifically — lets us filter/identify
 # log lines as coming from "testforge.webhooks" rather than just "root"
@@ -102,7 +103,12 @@ def _handle_push(payload: dict) -> None:
 
     # everything which used to be manual (analyze -> branch -> commit -> PR),
     # now the graph's nodes do all of that internally — this one call replaces it all
-    result = start_run(repo, installation_id, sha, real_changed_files, diffs)
+    try:
+        result = start_run(repo, installation_id, sha, real_changed_files, diffs)
+    except ReadmeNotFoundError:
+        logger.info("No README.md found in %s — nothing to analyze.", repo)
+        return
+
     logger.info("Run %s reached status=%s", sha, result.get("status"))
 
 # handles the review decision, was previously received and ignored entirely
