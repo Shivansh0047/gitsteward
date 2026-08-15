@@ -15,8 +15,8 @@ class ReadmeNotFoundError(Exception):
     trigger a 'generate a README from scratch by reading the code' flow —
     not built yet, deliberately deferred."""
 
-def fetch_readme() -> str:
-    repo = get_repo()
+def fetch_readme(repo_full_name: str, installation_id: int) -> str:
+    repo = get_repo(repo_full_name, installation_id)  # now repo-specific
     try:
         readme = repo.get_contents("README.md")  # exact path — Notes.md is never touched here at all
     except Exception as e:
@@ -27,8 +27,8 @@ def fetch_readme() -> str:
 
 # calls the splitter, then for each resulting chunk, pulls out its heading text from the metadata (preferring the most specific
 # level available — h3 if present, else h2, else h1) and converts that heading into a URL-style anchor slug.
-def chunk_readme() -> list[dict]:
-    markdown_text = fetch_readme()
+def chunk_readme(repo_full_name: str, installation_id: int) -> list[dict]:
+    markdown_text = fetch_readme(repo_full_name, installation_id)
     splitter = MarkdownHeaderTextSplitter(headers_to_split_on=HEADERS_TO_SPLIT_ON)
     docs = splitter.split_text(markdown_text) # each `doc` = one section, with header metadata attached
 
@@ -56,9 +56,9 @@ def _slugify(heading: str) -> str:
     text = "".join(c for c in text if c.isalnum() or c in (" ", "-"))
     return text.replace(" ", "-")
 
-def build_full_readme_preview(rewritten_by_anchor: dict[str, str]) -> str:
+def build_full_readme_preview(repo_full_name: str, installation_id: int, rewritten_by_anchor: dict[str, str]) -> str:
     """Rebuilds the entire README, replacing only the sections that were rewritten."""
-    chunks = chunk_readme()
+    chunks = chunk_readme(repo_full_name, installation_id)
     parts = []
     for chunk in chunks:
         content = rewritten_by_anchor.get(chunk["anchor"], chunk["content"])  # use rewrite if we have one, else original

@@ -22,7 +22,7 @@ def _get_compiled_graph():
 def _make_thread_id(repo: str, run_id: str) -> str:
     return f"{repo}:{run_id}"  # repo-aware, to support multi-repo later
 
-def start_run(repo: str, run_id: str, changed_files: list[str], diffs: dict[str, str]) -> dict:
+def start_run(repo: str, installation_id: int, run_id: str, changed_files: list[str], diffs: dict[str, str]) -> dict:
     """Invoke the graph for a brand new run brand-new run for one push."""
     graph = _get_compiled_graph()
     config = {"configurable": {"thread_id": _make_thread_id(repo, run_id)}}
@@ -30,6 +30,7 @@ def start_run(repo: str, run_id: str, changed_files: list[str], diffs: dict[str,
     initial_state = {
         "run_id": run_id,
         "repo": repo,
+        "installation_id": installation_id,  # new — carried in state so a resume doesn't need the original webhook payload
         "changed_files": changed_files,
         "diffs": diffs,
         "section_results": {},
@@ -40,7 +41,9 @@ def start_run(repo: str, run_id: str, changed_files: list[str], diffs: dict[str,
     return graph.invoke(initial_state, config)
 
 def resume_run(repo: str, run_id: str, merged: bool) -> dict:
-    """Resumes a run that's currently paused at await_review_node."""
+    """Resumes a run that's currently paused at await_review_node.
+    No installation_id needed here — it's already sitting in the
+    checkpointed state from start_run(), restored automatically."""
     graph = _get_compiled_graph()
     config = {"configurable": {"thread_id": _make_thread_id(repo, run_id)}} # Get prev thread_id, safe as it is deterministic
     return graph.invoke(Command(resume=merged), config)

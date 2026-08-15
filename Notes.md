@@ -33,7 +33,7 @@ We are using a lib called py github which handles both.
 
         Notes.md is never referenced anywhere in this file — it's excluded by
         construction, not by a filter.
-    2. rag/embeddings.py
+    2. rag/embeddings.py (now replaced by rag/vectorstore.py)
         In-memory semantic search over the chunked README, via Chroma + Gemini
         embeddings.
 
@@ -56,6 +56,13 @@ We are using a lib called py github which handles both.
         the actual replacement text for just that section.
         Both share one ChatGroq client (llama-3.3-70b-versatile, temperature=0
         for consistent, non-creative judgments).
+    4. rag/vectostore - Three permanent, pgvector-backed vectorstores per repo, one collection each:
+        "readme"      — README.md on main. Searched by SIMILARITY (finds candidates).
+        "docs-main"    — gitsteward-docs/ on main (previously merged suggestions).
+        "docs-branch"  — gitsteward-docs/ on the open review branch (in-progress).
+        Tiers 2 and 3 (docs-main, docs-branch) are looked up by EXACT anchor match,
+        not similarity — we already know the anchor from the README search, we just
+        need "what does that anchor currently say."
 
 16. Changed the project name to gitsteward.
 17. A patch file (usually ending in .patch or .diff) is a plain text file that describes the exact line-by-line code changes made between two commits.
@@ -72,3 +79,4 @@ We are using a lib called py github which handles both.
 Since we reuse one branch/PR across multiple pushes, a single PR could represent more than one paused run. We need a small lookup: "given this PR number, which run_ids are waiting on it?" for which we will add a a tiny dedicated Postgres table separate from LangGraph's own checkpoint tables, just a simple mapping we maintain ourselves.
 28. Two related bugs were found and fixed in GitSteward's LangGraph pipeline. First, merging a GitSteward PR (which only changes files under gitsteward-docs/) was itself firing a new push webhook on main, causing the pipeline to re-analyze its own output and spawn a spurious new PR — fixed by filtering out any gitsteward-docs/* paths from a push's changed-files list before deciding whether to start a run, so merge commits correctly trigger no new analysis. Second, and more subtly: because GitSteward never edits the real README.md, every run's staleness analysis was always comparing against that same unchanging file — meaning a second push (e.g. reverting embeddings) made before an earlier open PR (e.g. reverting the LLM) was merged would silently overwrite the first PR's proposed content, since the LLM had no awareness a prior unmerged (or even merged-but-not-reflected-in-README) suggestion already existed. This was fixed with a three-tier content-resolution strategy in locate_stale_sections(): before reasoning about a candidate section, GitSteward now checks (1) the currently open review branch's gitsteward-docs/<anchor>.md, then (2) main's already-merged gitsteward-docs/<anchor>.md if no open branch has one, and only falls back to (3) the raw README.md section if neither exists —  Tier 1: [branch] first — checks the currently open review branch's *gitsteward-docs/<anchor>.md*. Tier 2: falls through to "main" — checks *gitsteward-docs/<anchor>.md* on main (a previously merged suggestion). Tier 3: if get_existing_suggestion_content() returns None (neither tier 1 nor 2 has anything), locate_stale_sections() simply never overwrites c["content"] — meaning it keeps whatever retrieve_relevant_sections() originally returned, which is always the raw README.md section from the vector store. So tier 3 isn't a separate explicit fallback line of code — it's just "do nothing," which correctly leaves the original README content in place. Confirmed, all three tiers, in exactly your specified priority order.
 meaning every run reasons from the most up-to-date known truth rather than a stale, unchanging baseline, and sequential pushes now correctly build on each other's proposals instead of clobbering them. Verified live: two independent revert commits (LLM, then embeddings) run through the pipeline without merging between them correctly produced one final stack.md reflecting both changes together on the same reused PR.
+29. Dedicated vector databases (Pinecone, Qdrant, Weaviate) earn their complexity when you have millions of vectors and need approximate-nearest-neighbor search to stay fast at that scale, or need sharding/replication across a cluster. We have, per repo, roughly a dozen README sections and a handful of doc suggestions — call it 30-50 vectors total per repo. A brute-force exact search over that many vectors is effectively instant regardless of the backend; there's no performance problem pgvector needs to solve differently than a dedicated DB would. What we do get from keeping it in Postgres: one connection, one set of credentials, one place backing up both the LangGraph checkpoints and the vector data together, and no extra service to deploy, monitor, or pay for on Render's free tier. If GitSteward ever needed to index thousands of repos with huge docs, that calculus would flip — but for this project's actual scale, pgvector is the more correct engineering choice, not a compromise.

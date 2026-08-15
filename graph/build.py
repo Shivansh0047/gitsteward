@@ -5,6 +5,7 @@ from graph.pr_tracking import record_pr_run
 
 from graph.state import WorkflowState
 from rag.llm import analyze_push_diffs, rewrite_merged_section
+from rag.vectorstore import refresh_docs_store  # new — keeps the docs-branch pgvector store in sync
 from rag.readme_source import build_full_readme_preview
 from github_app import (
     get_or_create_review_branch,
@@ -17,7 +18,7 @@ from github_app import (
 def resolve_branch_node(state: WorkflowState) -> dict:
     """Runs FIRST, before any LLM reasoning — so analyze_node knows which
     branch (if any) to check for already-proposed content."""
-    branch, is_new, existing_pr_number = get_or_create_review_branch()
+    branch, is_new, existing_pr_number = get_or_create_review_branch(state["repo"], state["installation_id"])
     return {
         "branch": branch,
         "is_new_branch": is_new,
@@ -28,7 +29,8 @@ def analyze_node(state: WorkflowState) -> dict:
     """Run the LLM reasoning, same logic as before — just now it
     READS from state (state['diffs']) instead of a function parameter,
     and RETURNS a dict of updates instead of directly writing files."""
-    merged = analyze_push_diffs(state["diffs"], branch=state.get("branch"))  # branch now available
+    has_open_branch = not state.get("is_new_branch", True)  # False on a fresh branch (nothing proposed yet), True if reusing one
+    merged = analyze_push_diffs(state["repo"], state["installation_id"], state["diffs"], has_open_branch=has_open_branch)
 
     section_results = {}
     for anchor, section in merged.items():
@@ -48,11 +50,13 @@ def commit_and_open_pr_node(state: WorkflowState) -> dict:
     if not state["section_results"]:
         return {"status": "done"}  # nothing to propose, skip straight to done
 
+    repo, installation_id = state["repo"], state["installation_id"]
     branch = state["branch"]          # already resolved, no need to call get_or_create_review_branch again
     is_new = state["is_new_branch"]
 
     files_to_commit = {}
     rewritten_by_anchor = {}
+    docs_branch_entries = {}  # new — mirrors what we're writing, feeds the docs-branch pgvector store
     for anchor, result in state["section_results"].items():
         files_to_commit[f"gitsteward-docs/{anchor}.md"] = (
             "---\n"
@@ -64,20 +68,23 @@ def commit_and_open_pr_node(state: WorkflowState) -> dict:
             f"{result['content']}\n"
         )
         rewritten_by_anchor[anchor] = result["content"]
+        docs_branch_entries[anchor] = {"heading": anchor.replace("-", " ").title(), "content": result["content"]}  # new
 
-    files_to_commit["gitsteward-docs/modified_gitsteward_readme.md"] = build_full_readme_preview(rewritten_by_anchor)
+    files_to_commit["gitsteward-docs/modified_gitsteward_readme.md"] = build_full_readme_preview(repo, installation_id, rewritten_by_anchor)
 
     anchor_updates = {a: r["status"] for a, r in state["section_results"].items()}
     anchor_summaries = {a: " / ".join(r["reasons"]) for a, r in state["section_results"].items()}
     files_to_commit["gitsteward-docs/README.md"] = build_tracking_index_content(
-        anchor_updates, state["run_id"], branch, summaries=anchor_summaries
+        repo, installation_id, anchor_updates, state["run_id"], branch, summaries=anchor_summaries
     )
 
-    commit_multiple_files(branch, files_to_commit, message=f"GitSteward: update {len(state['section_results'])} section(s) (push {state['run_id'][:7]})")
+    commit_multiple_files(repo, installation_id, branch, files_to_commit, message=f"GitSteward: update {len(state['section_results'])} section(s) (push {state['run_id'][:7]})")
+
+    refresh_docs_store(repo, "docs-branch", docs_branch_entries)  # new — sync the branch's pgvector store immediately after writing
 
     if is_new:
         pr_number = open_review_pr(
-            branch,
+            repo, installation_id, branch,
             title="GitSteward: doc suggestions",
             body="Automated suggestions for potentially stale README sections. Review each file under `gitsteward-docs/` and merge or close.",
         )
@@ -86,10 +93,10 @@ def commit_and_open_pr_node(state: WorkflowState) -> dict:
         pr_number = state["pr_number"]  # already fetched in resolve_branch_node
         comment = f"GitSteward updated its open review PR — {len(state['section_results'])} section(s) flagged."
 
-    record_pr_run(state["repo"], pr_number, state["run_id"])   # link this run to its PR
-    post_commit_comment(state["run_id"], comment)
+    record_pr_run(repo, pr_number, state["run_id"])   # link this run to its PR
+    post_commit_comment(repo, installation_id, state["run_id"], comment)
 
-    return {"branch": branch, "pr_number": pr_number, "status": "waiting_approval"}
+    return {"pr_number": pr_number, "status": "waiting_approval"}
 
 
 def await_review_node(state: WorkflowState) -> dict:

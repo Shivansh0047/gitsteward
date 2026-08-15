@@ -6,9 +6,11 @@ from fastapi import APIRouter, Header, HTTPException, Request
 
 from config import settings
 
-from github_app import get_commit_diffs
+from github_app import get_commit_diffs, get_repo
 from graph.runtime import start_run, resume_run  # replaces the manual analyze/commit/PR pipeline
 from graph.pr_tracking import get_runs_for_pr  # looks up which run(s) a closed PR belongs to
+from graph.repo_registry import register_repo  # new — auto-registers a repo the first time we see it
+from rag.vectorstore import refresh_docs_store  # new — used to sync the docs-main store after a merge
 
 # A named logger for this file specifically — lets us filter/identify
 # log lines as coming from "testforge.webhooks" rather than just "root"
@@ -37,9 +39,31 @@ def _get_changed_files(payload: dict) -> list[str]:
         changed.update(commit.get("added", []))
         changed.update(commit.get("modified", []))
         changed.update(commit.get("removed", []))
-    # never treat our own output folder as something needing analysis —
-    # prevents merges of our own PRs from re-triggering the whole pipeline
-    return sorted(f for f in changed if not f.startswith("gitsteward-docs/"))
+    return sorted(changed)  # no longer filters gitsteward-docs/ here — that split happens below now, since a merge-only push needs different handling, not just ignoring
+
+# after a merge lands gitsteward-docs/ files on main, rebuild the
+# docs-main pgvector store from what's actually there, so it stays accurate
+def _sync_docs_main_store(repo_full_name: str, installation_id: int) -> None:
+    repo = get_repo(repo_full_name, installation_id)
+    try:
+        contents = repo.get_contents("gitsteward-docs", ref="main")
+    except Exception:
+        return  # folder doesn't exist yet, nothing to sync
+
+    entries = {}
+    for item in contents:
+        if item.name in ("README.md", "modified_gitsteward_readme.md"):
+            continue  # only individual anchor files represent "current content" for an anchor
+        anchor = item.name.removesuffix(".md")
+        raw = item.decoded_content.decode()
+        parts = raw.split("---", 2)
+        body = parts[2] if len(parts) >= 3 else raw
+        body = body.strip()
+        if body.startswith("**Why flagged:**"):
+            body = body.split("\n\n", 1)[1] if "\n\n" in body else body
+        entries[anchor] = {"heading": anchor.replace("-", " ").title(), "content": body.strip()}
+
+    refresh_docs_store(repo_full_name, "docs-main", entries)
 
 # This function gets changed files, run through the real LLM pipeline now (was match_anchors())
 def _handle_push(payload: dict) -> None:
@@ -51,21 +75,34 @@ def _handle_push(payload: dict) -> None:
 
     sha = payload.get("after")
     repo = payload.get("repository", {}).get("full_name")
-    changed_files = _get_changed_files(payload)
-    logger.info("Push %s touched %d file(s): %s", sha, len(changed_files), changed_files) # debug check
+    installation_id = payload.get("installation", {}).get("id")  # always present on real webhook deliveries
+    register_repo(repo, installation_id)  # no-op if already known, records it if not
 
-    if not changed_files:
+    changed_files = _get_changed_files(payload)
+    docs_files = [f for f in changed_files if f.startswith("gitsteward-docs/")]
+    real_changed_files = [f for f in changed_files if not f.startswith("gitsteward-docs/")]  # new split, replaces the old blanket filter
+
+    if docs_files and not real_changed_files:
+        # this push is (only) a merge of our own PR — sync docs-main instead
+        # of starting a new analysis run (prevents the old self-trigger bug)
+        logger.info("Push %s only touched gitsteward-docs/ — syncing docs-main store, no new run.", sha)
+        _sync_docs_main_store(repo, installation_id)
+        return
+
+    logger.info("Push %s touched %d file(s): %s", sha, len(real_changed_files), real_changed_files) # debug check
+
+    if not real_changed_files:
         logger.info("No changed files — nothing to do.")  # early exit, no diffs to fetch as github send empty patch file
         return
 
-    diffs = get_commit_diffs(sha)  # {file_path: unified_diff_patch}, real diff text for the LLM
+    diffs = get_commit_diffs(repo, installation_id, sha)  # {file_path: unified_diff_patch}, real diff text for the LLM
     if not diffs:
         logger.info("No usable diffs for this push (binary/huge files only?) — nothing to do.")
         return
 
     # everything which used to be manual (analyze -> branch -> commit -> PR),
     # now the graph's nodes do all of that internally — this one call replaces it all
-    result = start_run(repo, sha, changed_files, diffs)
+    result = start_run(repo, installation_id, sha, real_changed_files, diffs)
     logger.info("Run %s reached status=%s", sha, result.get("status"))
 
 # handles the review decision, was previously received and ignored entirely

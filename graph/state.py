@@ -9,6 +9,7 @@ class SectionResult(TypedDict):
 class WorkflowState(TypedDict):
     run_id: str                    # the triggering commit SHA — also our thread_id for checkpointing
     repo: str                      # "owner/name"
+    installation_id: int            # new — which App installation to authenticate as; must survive a resume, so it lives in state, not just the webhook payload
     changed_files: list[str]
     diffs: dict[str, str]           # {file_path: diff_patch}
     section_results: dict[str, SectionResult]   # {anchor: result}, populated as nodes run

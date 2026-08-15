@@ -3,8 +3,7 @@ import json
 from langchain_groq import ChatGroq
 
 from config import settings
-from rag.embeddings import retrieve_relevant_sections
-from github_app import get_existing_suggestion_content 
+from rag.vectorstore import retrieve_relevant_sections, get_current_content  # replaces rag.embeddings + github_app's old tier lookup
 
 _llm: ChatGroq | None = None
 
@@ -45,11 +44,11 @@ Do not repeat the heading itself — just the body text.
 Respond with the rewritten text only — no preamble, no explanation, no markdown code fences.
 """
 
-def locate_stale_sections(file_path: str, diff: str, branch: str | None = None) -> list[dict]:
-    candidates = retrieve_relevant_sections(diff, k=6)
+def locate_stale_sections(repo_full_name: str, installation_id: int, file_path: str, diff: str, has_open_branch: bool = False) -> list[dict]:
+    candidates = retrieve_relevant_sections(repo_full_name, installation_id, diff, k=6)
 
     for c in candidates:
-        existing = get_existing_suggestion_content(c["anchor"], branch)
+        existing = get_current_content(repo_full_name, c["anchor"], has_open_branch)  # tier 1/2 lookup, pgvector-backed
         if existing:
             c["content"] = existing  # prefer tier 1/2 over the raw README section
 
@@ -93,7 +92,7 @@ def rewrite_section(file_path: str, diff: str, stale_section: dict) -> str:
     response = _get_llm().invoke(prompt)
     return response.content.strip()
 
-def analyze_push_diffs(diffs: dict[str, str], branch: str | None = None) -> dict[str, dict]:
+def analyze_push_diffs(repo_full_name: str, installation_id: int, diffs: dict[str, str], has_open_branch: bool = False) -> dict[str, dict]:
     """
     Runs locate_stale_sections() once per changed file, then merges
     results by anchor — if two files both flag the same section, we
@@ -103,7 +102,7 @@ def analyze_push_diffs(diffs: dict[str, str], branch: str | None = None) -> dict
     merged: dict[str, dict] = {}
 
     for file_path, diff in diffs.items():
-        for section in locate_stale_sections(file_path, diff, branch=branch):  # pass branch through
+        for section in locate_stale_sections(repo_full_name, installation_id, file_path, diff, has_open_branch=has_open_branch):  # repo/installation/has_open_branch threaded through
             anchor = section["anchor"]
             if anchor not in merged:
                 merged[anchor] = {

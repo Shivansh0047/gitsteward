@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 from github import InputGitTreeElement  # needed for batched multi-file commits
 
 # To commit many files
-def commit_multiple_files(branch: str, files: dict[str, str], message: str) -> None:
+def commit_multiple_files(repo_full_name: str, installation_id: int, branch: str, files: dict[str, str], message: str) -> None:
     """Writes several files in ONE commit, instead of one commit per file."""
-    repo = get_repo()
+    repo = get_repo(repo_full_name, installation_id)  # now repo-specific
     ref = repo.get_git_ref(f"heads/{branch}")
     base_commit = repo.get_git_commit(ref.object.sha)  # current tip of the branch
 
@@ -27,22 +27,25 @@ def _load_private_key() -> str: # read .pem file
         return f.read()
 
 
-def get_installation_client() -> Github:
+def get_installation_client(installation_id: int) -> Github:
+    # installation_id is now a parameter, not settings.github_installation_id —
+    # same App ID/private key used regardless of which installation this is
     integration = GithubIntegration(settings.github_app_id, _load_private_key()) # Object of GitSteward, the App, signs jwt token
-    access_token = integration.get_access_token(settings.github_installation_id) # Exchnage KWT for real token
+    access_token = integration.get_access_token(installation_id) # Exchnage KWT for real token
     return Github(access_token.token) # A normal PyGithub client already authicanted
 
 
-def get_repo():
-    client = get_installation_client()
-    return client.get_repo(f"{settings.demo_repo_owner}/{settings.demo_repo_name}")
+def get_repo(repo_full_name: str, installation_id: int):
+    # repo_full_name replaces the old hardcoded settings.demo_repo_owner/name
+    client = get_installation_client(installation_id)
+    return client.get_repo(repo_full_name)
 
 
 REVIEW_BRANCH = "gitsteward/doc-suggestions"
 
 # Create new revier branch or get the old one
-def get_or_create_review_branch(base: str = "main") -> tuple[str, bool, int | None]:
-    repo = get_repo()
+def get_or_create_review_branch(repo_full_name: str, installation_id: int, base: str = "main") -> tuple[str, bool, int | None]:
+    repo = get_repo(repo_full_name, installation_id)
 
     open_prs = repo.get_pulls(state="open", head=f"{repo.owner.login}:{REVIEW_BRANCH}") # Check if there is some brnch which alread exicts
     for pr in open_prs:
@@ -61,21 +64,21 @@ def get_or_create_review_branch(base: str = "main") -> tuple[str, bool, int | No
     repo.create_git_ref(ref=f"refs/heads/{REVIEW_BRANCH}", sha=base_sha)  # Name the branch after pointer of commit of main
     return REVIEW_BRANCH, True, None
 
-def get_commit_diffs(sha: str) -> dict[str, str]: # Get actual code difference, so LLM can reason Properly
+def get_commit_diffs(repo_full_name: str, installation_id: int, sha: str) -> dict[str, str]: # Get actual code difference, so LLM can reason Properly
     """Returns {file_path: unified_diff_patch} for every file changed in this commit."""
-    repo = get_repo()
+    repo = get_repo(repo_full_name, installation_id)
     commit = repo.get_commit(sha)
     return {f.filename: f.patch for f in commit.files if f.patch}  # f.patch is None for binary/huge files
 
 # Opening a pull request
-def open_review_pr(branch: str, title: str, body: str, base: str = "main") -> int:
-    repo = get_repo()
+def open_review_pr(repo_full_name: str, installation_id: int, branch: str, title: str, body: str, base: str = "main") -> int:
+    repo = get_repo(repo_full_name, installation_id)
     pr = repo.create_pull(title=title, body=body, head=branch, base=base)
     return pr.number # return PR number
 
 # A helper functin to mention this is a GitSteward commit
-def post_commit_comment(sha: str, body: str) -> None:
-    repo = get_repo()
+def post_commit_comment(repo_full_name: str, installation_id: int, sha: str, body: str) -> None:
+    repo = get_repo(repo_full_name, installation_id)
     commit = repo.get_commit(sha)
     commit.create_comment(body)
 
@@ -122,10 +125,10 @@ def _render_tracking_index(rows: dict[str, dict[str, str]]) -> str:
         ]
     return "\n".join(lines) + "\n"
 
-def build_tracking_index_content(anchor_updates: dict[str, str], commit_sha: str, branch: str, summaries: dict[str, str] | None = None) -> str:
+def build_tracking_index_content(repo_full_name: str, installation_id: int, anchor_updates: dict[str, str], commit_sha: str, branch: str, summaries: dict[str, str] | None = None) -> str:
     """fetches the current file (if any), merges in this run's new anchor statuses, returns the content instead of writing it — caller batches the write."""
     summaries = summaries or {}
-    repo = get_repo()
+    repo = get_repo(repo_full_name, installation_id)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     try:
@@ -145,24 +148,6 @@ def build_tracking_index_content(anchor_updates: dict[str, str], commit_sha: str
 
     return _render_tracking_index(rows)  # just return it now, don't write
 
-def get_existing_suggestion_content(anchor: str, branch: str | None) -> str | None:
-    """Tier 1: current open branch's version (if any). Tier 2: main's
-    already-merged version (if any). Returns None if neither exists —
-    caller falls back to the raw README.md section (tier 3)."""
-    repo = get_repo()
-    refs_to_try = ([branch] if branch else []) + ["main"]
-
-    for ref in refs_to_try:
-        try:
-            existing = repo.get_contents(f"gitsteward-docs/{anchor}.md", ref=ref)
-        except Exception:
-            continue  # doesn't exist at this tier, try the next one
-
-        raw = existing.decoded_content.decode()
-        parts = raw.split("---", 2)  # our files: ---\n<frontmatter>\n---\n\n<body>
-        body = parts[2] if len(parts) >= 3 else raw
-        if body.strip().startswith("**Why flagged:**"):
-            body = body.split("\n\n", 1)[1] if "\n\n" in body else body
-        return body.strip()
-
-    return None
+# get_existing_suggestion_content() removed — tier 1/2 lookups now live in
+# rag/vectorstore.py's get_current_content(), backed by pgvector, not a live
+# GitHub fetch on every single candidate section.
