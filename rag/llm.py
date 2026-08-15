@@ -10,7 +10,7 @@ _llm: ChatGroq | None = None
 def _get_llm() -> ChatGroq:
     global _llm
     if _llm is None:
-        _llm = ChatGroq(model="llama-3.3-70b-versatile", api_key=settings.groq_api_key, temperature=0)
+        _llm = ChatGroq(model="openai/gpt-oss-120b", api_key=settings.groq_api_key, temperature=0)
     return _llm
 
 LOCATE_PROMPT = """You are reviewing a code change to decide which sections of a README are now stale.
