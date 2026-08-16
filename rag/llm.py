@@ -27,7 +27,7 @@ For each candidate section, decide if the diff makes it stale. Respond ONLY with
 ]
 """
 
-REWRITE_PROMPT = """You are updating documentation to stay accurate after a code change.
+REWRITE_PROMPT = """You are updating documentation to represent the CURRENT state of the code after the provided change.
 
 Section: {heading}
 Why it's stale: {reason}
@@ -38,10 +38,24 @@ Current section text:
 Code diff that caused this (file: {file_path}):
 {diff}
 
-Rewrite ONLY this section's body text so it accurately reflects the change.
-Keep the same tone, length, and formatting style as the original.
-Do not repeat the heading itself — just the body text.
-Respond with the rewritten text only — no preamble, no explanation, no markdown code fences.
+Rewrite the ENTIRE section body so that it best represents the CURRENT state of the code.
+
+You have full freedom to:
+- keep information that is still correct,
+- modify information that is partially outdated,
+- replace information that is now incorrect,
+- remove information that is no longer relevant,
+- add information that is necessary to accurately represent the current code.
+
+Do NOT preserve old documentation merely because it existed before.
+Do NOT write a history of the change.
+The output should describe the current codebase as it exists AFTER the change.
+
+Use the existing section's structure, tone, formatting style, and level of detail where they remain appropriate, but prioritize factual correctness over preserving the original wording.
+
+Do not repeat the heading itself.
+Respond with the complete rewritten section body only.
+No preamble, no explanation, no markdown code fences.
 """
 
 def locate_stale_sections(repo_full_name: str, installation_id: int, file_path: str, diff: str, has_open_branch: bool = False) -> list[dict]:

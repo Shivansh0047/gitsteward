@@ -53,6 +53,30 @@ def _replace_store_contents(repo_full_name: str, kind: str, entries: list[dict])
     """entries: [{"anchor", "heading", "content"}, ...]. Wipes and
     rewrites — simplest way to guarantee the store matches reality."""
     store = _get_store(repo_full_name, kind)
+
+    if kind == "docs-branch":
+        existing_entries = []
+
+        try:
+            results = store.similarity_search("placeholder", k=1000)
+            for result in results:
+                existing_entries.append({
+                    "anchor": result.metadata["anchor"],
+                    "heading": result.metadata["heading"],
+                    "content": result.page_content.split("\n\n", 1)[-1],
+                })
+        except Exception:
+            existing_entries = []
+
+        existing_by_anchor = {
+            e["anchor"]: e for e in existing_entries
+        }
+
+        for entry in entries:
+            existing_by_anchor[entry["anchor"]] = entry
+
+        entries = list(existing_by_anchor.values())
+
     store.delete_collection()  # drop everything currently stored under this collection
     if not entries:
         return
