@@ -1,20 +1,19 @@
 # GitSteward
 
-GitSteward is a GitHub App‑based AI agent that watches a repository's commits, detects when code changes make `README.md` documentation stale, and proposes fixes as reviewable Pull Requests — with a human always in the loop. It never edits a repository's real documentation directly, and it never merges its own suggestions.  
-
-Built with **FastAPI**, **LangGraph**, **LangChain**, **Groq** (`openai/gpt-oss-120b`), **Google Gemini** (`gemini-embedding-001`), **Chroma**, and **Postgres**.  
-
-> Demo repository used throughout development: [`Shivansh0047/RAG-Chatbot-Service`](https://github.com/Shivansh0047/RAG-Chatbot-Service) — a separate, unrelated FastAPI/RAG project used purely as a real‑world test subject.
+GitSteward is a GitHub App-based AI agent that watches a repository's commits, detects when code changes make `README.md` documentation stale, and proposes fixes as reviewable Pull Requests — with a human always in the loop. It never edits a repository's real documentation directly, and it never merges its own suggestions.  
+Built with **FastAPI**, **LangGraph**, **LangChain**, **Groq** (`llama-3.3-70b-versatile`), **Google Gemini** (`gemini-embedding-001`), **Chroma**, and **Postgres**.  
+> Demo repository used throughout development: [`Shivansh0047/RAG-Chatbot-Service`](https://github.com/Shivansh0047/RAG-Chatbot-Service) — a separate, unrelated FastAPI/RAG project used purely as a real-world test subject.  
+---
 
 ## What it does
 
-1. A push lands on a watched repo's `main` branch.
-2. GitSteward fetches the real code diff and retrieves the README sections most semantically related to that change (RAG over the actual README, not a hardcoded rule table).
-3. An LLM judges which of those candidate sections are genuinely now inaccurate, and drafts a rewrite for each one.
-4. The proposed rewrites are committed — as a **single commit** — to a reusable review branch, and opened as a Pull Request in an **isolated `gitsteward-docs/` folder**. The repository's real `README.md` is never touched.
-5. The pipeline **pauses** at this point and waits, indefinitely, for a human to merge or close the PR on GitHub.
-6. Once the human decides, GitSteward resumes automatically and records the outcome.  
----
+1. A push lands on a watched repository’s `main` branch.  
+2. GitSteward fetches the real code diff. It then looks for a `README.md` in the repository; if none is found, the pipeline aborts early, logs “No README.md found … — nothing to analyze,” and does nothing further.  
+3. When a `README.md` is present, the system retrieves the sections most semantically related to the change (RAG over the actual README, not a hard‑coded rule table).  
+4. An LLM evaluates those candidate sections, decides which are now inaccurate, and drafts a rewrite for each.  
+5. All proposed rewrites are bundled into a **single commit** on a dedicated review branch, placed inside an isolated `gitsteward-docs/` folder, and opened as a Pull Request.  
+6. The pipeline **pauses** at this point and waits indefinitely for a human to merge or close the PR on GitHub.  
+7. Once the human decides, GitSteward resumes automatically, records the outcome, and (if merged) syncs the documentation store via the RAG vectorstore.
 
 ## Why it's built this way
 
