@@ -1,147 +1,961 @@
 # GitSteward
 
-GitSteward is a GitHub App-based AI agent that watches a repository's commits, detects when code changes make `README.md` documentation stale, and proposes fixes as reviewable Pull Requests — with a human always in the loop. It never edits a repository's real documentation directly, and it never merges its own suggestions.
+**GitSteward is a GitHub App-based AI agent that keeps repository documentation aligned with code changes.**
 
-Built with **FastAPI**, **LangGraph**, **LangChain**, **Groq** (`llama-3.3-70b-versatile`), **Google Gemini** (`gemini-embedding-001`), **Chroma**, and **Postgres**.
+It watches pushes to `main`, retrieves the README sections most relevant to a code change, uses an LLM to determine whether those sections have become stale, and proposes documentation updates through a human-reviewed Pull Request.
 
-> Demo repository used throughout development: [`Shivansh0047/RAG-Chatbot-Service`](https://github.com/Shivansh0047/RAG-Chatbot-Service) — a separate, unrelated FastAPI/RAG project used purely as a real-world test subject.
+GitSteward **never edits the real `README.md` directly and never merges its own Pull Requests**.
 
----
+Built with **FastAPI, LangGraph, LangChain, Groq GPT-OSS 120B, Google Gemini embeddings, PostgreSQL + pgvector, and GitHub Apps**.
 
-## What it does
-
-1. A push lands on a watched repo's `main` branch.
-2. GitSteward fetches the real code diff and retrieves the README sections most semantically related to that change (RAG over the actual README, not a hardcoded rule table).
-3. An LLM judges which of those candidate sections are genuinely now inaccurate, and drafts a rewrite for each one.
-4. The proposed rewrites are committed — as a **single commit** — to a reusable review branch, and opened as a Pull Request in an **isolated `gitsteward-docs/` folder**. The repository's real `README.md` is never touched.
-5. The pipeline **pauses** at this point and waits, indefinitely, for a human to merge or close the PR on GitHub.
-6. Once the human decides, GitSteward resumes automatically and records the outcome.
+> Primary development/demo repository: [`Shivansh0047/RAG-Chatbot-Service`](https://github.com/Shivansh0047/RAG-Chatbot-Service)
 
 ---
 
-## Why it's built this way
+## What It Does
 
-**Human review is non-negotiable, not a nice-to-have.** GitSteward's write access is scoped so it can only ever create a throwaway branch, write files under `gitsteward-docs/`, and open a PR. It has no code path that calls a merge endpoint. This isn't just a convention — the LangGraph pipeline literally halts execution (via `interrupt()`) at the review gate and cannot proceed until a real GitHub event (a PR being closed) resumes it.
+When code changes, documentation can silently become incorrect.
 
-**Suggestions live in an isolated folder, not in the real docs.** Every proposal is written to `gitsteward-docs/<anchor>.md`, plus a full rebuilt-README preview (`gitsteward-docs/modified_gitsteward_readme.md`) and a running summary index (`gitsteward-docs/README.md`). Merging a GitSteward PR only merges these files — a human still chooses when and how to apply an accepted suggestion to the real `README.md`.
+GitSteward automates the detection and proposal part of that workflow:
 
-**A GitHub App, not a personal access token.** GitSteward authenticates as its own bot identity with least-privilege permissions (`Contents: read/write`, `Pull requests: read/write` — nothing else), so every action it takes is attributable to it specifically, not to a personal account.
-
-**Section-level reasoning, not file-level.** Because most repositories document themselves in one `README.md` rather than a `docs/` folder, GitSteward reasons about individual `##`/`###` sections, each tagged with a GitHub-style anchor slug, and can propose a targeted fix to one section without touching the rest of the document.
-
-**No local ML models.** Every LLM and embedding call goes through an API (Groq, Gemini) — chosen specifically to avoid loading large models into memory, since the target deployment (Render's free tier) has limited RAM.
-
----
-
-## Architecture
-
+```text
+Code push to main
+       │
+       ▼
+GitHub App webhook
+       │
+       ▼
+Fetch real code diff
+       │
+       ▼
+Retrieve relevant README sections
+       │
+       ▼
+LLM decides which sections are stale
+       │
+       ▼
+LLM rewrites stale sections
+       │
+       ▼
+Commit proposals to gitsteward-docs/
+       │
+       ▼
+Open / update review PR
+       │
+       ▼
+       interrupt()
+       │
+       ▼
+Human reviews PR
+       │
+       ├──────────────┐
+       │              │
+     Merge           Close
+       │              │
+       ▼              ▼
+    Resume           Resume
+       │              │
+       └───────┬──────┘
+               ▼
+          Finalize run
 ```
+
+The real repository README remains untouched throughout the process.
+
+---
+
+## Core Design Principles
+
+### Human approval is mandatory
+
+GitSteward does not have a code path that merges its own Pull Requests.
+
+The LangGraph workflow literally stops at the review gate using `interrupt()`. The run is checkpointed to PostgreSQL and remains paused until GitHub sends a `pull_request: closed` event.
+
+A human therefore remains the final authority over every documentation suggestion.
+
+### Suggestions are isolated from the real README
+
+GitSteward writes its suggestions under:
+
+```text
+gitsteward-docs/
+```
+
+A review branch can contain:
+
+```text
+gitsteward-docs/
+├── <anchor>.md
+├── modified_gitsteward_readme.md
+└── README.md
+```
+
+The actual repository `README.md` is never modified by GitSteward.
+
+A GitSteward PR therefore contains proposed documentation, not an automatic modification of the repository's real documentation.
+
+### GitHub App authentication
+
+GitSteward authenticates as its own GitHub App identity rather than using a personal access token.
+
+The App uses the repository permissions it needs:
+
+- Contents: Read and write
+- Pull requests: Read and write
+
+Installation-specific access is handled dynamically from the GitHub webhook's `installation.id`.
+
+### Section-level reasoning
+
+GitSteward does not assume that documentation exists in a separate `docs/` directory.
+
+Instead, it parses the real `README.md` into sections and reasons using GitHub-style anchors such as:
+
+```text
+#stack
+#project-structure
+#required-environment-variables
+```
+
+This allows GitSteward to identify and propose a targeted change to an individual section.
+
+### API-based AI models
+
+No local LLM or embedding model is loaded.
+
+GitSteward currently uses:
+
+- **Groq `openai/gpt-oss-120b`** for LLM reasoning and rewriting
+- **Google Gemini `gemini-embedding-001`** for embeddings
+
+This keeps the application lightweight enough for the intended free-tier deployment environment.
+
+---
+
+# Architecture
+
+```text
 gitsteward/
-  bootstrap.py         # forces a safe native-library import order (Windows crash workaround)
-  main.py              # FastAPI entrypoint, builds the vectorstore + graph at startup
-  config.py            # all secrets/settings, loaded from .env
-  webhooks.py           # receives + verifies GitHub webhooks, starts/resumes graph runs
-  observability.py      # GET /runs/{run_id}/state and /timeline
-  github_app.py         # all GitHub API interaction (auth, branches, commits, PRs)
-
-  rag/
-    readme_source.py    # fetches + chunks README.md, rebuilds the full-preview file
-    embeddings.py        # in-memory Chroma vectorstore over the README, built at startup
-    llm.py                # LLM reasoning: locate stale sections, rewrite them
-
-  graph/
-    state.py             # WorkflowState — the shared schema every node reads/writes
-    build.py              # the LangGraph nodes and edges
-    runtime.py            # compiles the graph with Postgres checkpointing; start_run() / resume_run()
-    pr_tracking.py         # a small Postgres table mapping PR number -> waiting run(s)
+│
+├── bootstrap.py
+├── main.py
+├── config.py
+├── webhooks.py
+├── observability.py
+├── github_app.py
+│
+├── rag/
+│   ├── readme_source.py
+│   ├── vectorstore.py
+│   └── llm.py
+│
+└── graph/
+    ├── state.py
+    ├── build.py
+    ├── runtime.py
+    ├── pr_tracking.py
+    └── repo_registry.py
 ```
 
-### The pipeline, as a graph
+### `main.py`
 
+FastAPI application entrypoint.
+
+At startup it:
+
+- compiles the LangGraph workflow
+- initializes the PostgreSQL checkpointer
+- ensures required metadata tables exist
+- mounts webhook and observability routes
+
+Vectorstores are **not** built at startup. They are created lazily when a repository is first used.
+
+### `config.py`
+
+Loads application configuration and secrets from environment variables using the project's settings configuration.
+
+Important runtime configuration includes:
+
+```text
+GITHUB_APP_ID
+GITHUB_APP_PRIVATE_KEY_PATH
+GITHUB_WEBHOOK_SECRET
+GROQ_API_KEY
+GOOGLE_API_KEY
+DATABASE_URL
 ```
-resolve_branch → analyze → commit_and_pr → await_review → finalize
+
+Repository-specific installation information is obtained from webhook events in the live path.
+
+### `github_app.py`
+
+Contains GitHub API functionality:
+
+- GitHub App authentication
+- installation token exchange
+- repository access
+- retrieving commit diffs
+- branch creation/reuse
+- batched file commits
+- Pull Request creation
+- commit comments
+- tracking-index generation
+
+GitSteward uses the Git Data API to build a single commit containing all generated suggestion files.
+
+### `webhooks.py`
+
+Receives GitHub webhook deliveries and verifies the `X-Hub-Signature-256` HMAC signature.
+
+It handles:
+
+```text
+push
+pull_request
 ```
 
-- **`resolve_branch`** — finds or creates the reusable review branch, and determines whether a PR already exists on it. Runs *before* analysis so later steps know what to compare against.
-- **`analyze`** — for each changed file, retrieves candidate README sections, resolves the most current known text for each one (see below), and asks the LLM which are stale and how to rewrite them.
-- **`commit_and_pr`** — writes every proposed file in a single batched commit (via GitHub's Git Data API — blob → tree → commit — not one commit per file), then opens or updates the PR.
-- **`await_review`** — calls `interrupt()`. Execution genuinely halts here; the current state is checkpointed to Postgres and the graph waits, potentially for days, across server restarts, until a `pull_request: closed` webhook resumes it with the human's decision.
-- **`finalize`** — marks every proposed section `updated` (if merged) or `skipped` (if closed without merging), and marks the run `done`.
+For push events it:
 
-### Resolving "what does this section currently say?"
+1. verifies the branch is `main`
+2. extracts the repository and installation ID
+3. registers the repository
+4. separates GitSteward-generated documentation files from real code changes
+5. handles merge-only `gitsteward-docs/` pushes
+6. retrieves commit diffs
+7. starts a LangGraph run
 
-Because GitSteward never edits `README.md`, a naive implementation would always compare against the original, unchanging README text — which breaks the moment more than one push happens before a PR is reviewed. GitSteward resolves each candidate section's current text in three tiers, in order:
+For Pull Request events it resumes the runs associated with a closed GitSteward PR.
 
-1. **The currently open review branch's version**, if one exists (a prior, still-unmerged proposal for this exact section).
-2. **`main`'s already-merged version**, if no open branch has one (a previously accepted proposal).
-3. **The raw `README.md` section**, if neither of the above exists.
+### `observability.py`
 
-This means two independent pushes — say, one reverting an LLM choice and a later one reverting an embeddings choice — correctly accumulate into one coherent proposal on the same PR, instead of the second silently overwriting the first's work.
+Provides lightweight inspection endpoints:
 
-### Preventing self-triggering loops
+```text
+GET /health
+GET /runs/{run_id}/state?repo=<repo>
+GET /runs/{run_id}/timeline?repo=<repo>
+```
 
-GitSteward's own writes are themselves commits, which themselves fire `push` webhooks. Two separate guards prevent these from re-triggering analysis:
-- Pushes to anything other than `refs/heads/main` are ignored outright (catches direct pushes to the review branch).
-- Any changed file under `gitsteward-docs/` is filtered out of a push's file list before deciding whether to analyze anything (catches the merge commit itself, which — landing on `main` — would otherwise pass the first guard).
+These read persisted LangGraph state rather than re-executing the workflow.
+
+### `rag/readme_source.py`
+
+Responsible for README handling.
+
+It:
+
+- fetches `README.md`
+- splits it into sections
+- derives GitHub-style anchors
+- provides the section data to the retrieval system
+- rebuilds the full README preview with generated replacements
+
+If a repository has no `README.md`, GitSteward now exits cleanly without starting an analysis run.
+
+### `rag/vectorstore.py`
+
+Provides the persistent pgvector-backed RAG layer.
+
+GitSteward maintains three logical stores per repository:
+
+```text
+<repo>::readme
+<repo>::docs-branch
+<repo>::docs-main
+```
+
+#### `readme`
+
+Contains the actual README sections.
+
+Used for semantic candidate retrieval.
+
+#### `docs-branch`
+
+Contains the current proposals on the active GitSteward review branch.
+
+This is the highest-priority source when an open review branch exists.
+
+#### `docs-main`
+
+Contains documentation proposals that have already been merged into `main`.
+
+This provides durable memory after previous review cycles.
+
+All three stores are isolated by repository name, allowing the same GitSteward installation to work across multiple repositories.
+
+Vectorstores are created lazily on first use for each repository.
+
+### `rag/llm.py`
+
+Contains the AI reasoning layer.
+
+The workflow has two main LLM operations.
+
+#### Locate stale sections
+
+For each changed file, GitSteward:
+
+1. retrieves semantically related README sections
+2. resolves the current content for each candidate using the tiered system
+3. asks the LLM which candidates are actually stale
+
+The LLM returns structured JSON describing stale sections and reasons.
+
+Hallucinated anchors are ignored, and malformed JSON fails safely rather than crashing the run.
+
+#### Rewrite stale sections
+
+For each stale section, the LLM receives the relevant current section text and code diff and generates a complete replacement body.
+
+The LLM is responsible for deciding what information should be:
+
+- retained
+- modified
+- replaced
+- removed
+- added
+
+The application does not attempt to perform semantic merging of documentation itself.
+
+### `graph/state.py`
+
+Defines the shared `WorkflowState` used by all LangGraph nodes.
+
+Important state includes:
+
+```text
+repo
+installation_id
+run_id
+sha
+changed_files
+diffs
+branch
+is_new_branch
+pr_number
+section_results
+merged_result
+status
+```
+
+Any value needed by a later node must exist in the workflow state so it survives checkpoints and resumes.
+
+### `graph/build.py`
+
+Defines the LangGraph workflow:
+
+```text
+resolve_branch
+      ↓
+analyze
+      ↓
+commit_and_pr
+      ↓
+await_review
+      ↓
+finalize
+```
+
+#### `resolve_branch`
+
+Finds an existing open GitSteward PR or creates a new reusable review branch.
+
+#### `analyze`
+
+Runs retrieval, stale-section detection, and rewriting.
+
+#### `commit_and_pr`
+
+Writes generated suggestion files, updates the tracking index, commits everything together, and creates or updates the review PR.
+
+#### `await_review`
+
+Calls:
+
+```python
+interrupt(...)
+```
+
+and persists the workflow state.
+
+#### `finalize`
+
+Runs after the Pull Request closes and records whether the human accepted or rejected the suggestions.
+
+### `graph/runtime.py`
+
+Compiles the graph with PostgreSQL-backed LangGraph checkpointing.
+
+It provides:
+
+```text
+start_run()
+resume_run()
+get_run_state()
+get_run_timeline()
+```
+
+The checkpoint allows an analysis to pause for an arbitrary amount of time and resume later, including across process restarts.
+
+### `graph/pr_tracking.py`
+
+Maintains the mapping between:
+
+```text
+(repo, PR number)
+        ↓
+run IDs waiting for that PR
+```
+
+This allows one reusable GitSteward PR to be associated with multiple sequential analysis runs.
+
+### `graph/repo_registry.py`
+
+Maintains the repository registry:
+
+```text
+repo_full_name
+installation_id
+first_seen_at
+```
+
+Repositories are registered automatically when GitSteward receives their webhook events.
 
 ---
 
-## Setup
+# Three-Tier Documentation Resolution
 
-### 1. Create the GitHub App
-- Repository permissions: `Contents: Read and write`, `Pull requests: Read and write`.
-- Subscribe to `push` and `pull_request` events.
-- Generate a private key, install the App on the target repository, and note the App ID and Installation ID.
+A major design problem appears when multiple pushes occur before a GitSteward PR is reviewed.
 
-### 2. Environment
+Suppose:
+
+```text
+Push 1 → proposes documentation change A
+
+Push 2 → arrives before PR 1 is merged
 ```
+
+If Push 2 always compared against the original README, the second proposal could overwrite or contradict the first.
+
+GitSteward therefore resolves the current content of each candidate section in three tiers:
+
+```text
+                 Candidate Anchor
+                        │
+                        ▼
+              ┌─────────────────┐
+              │  docs-branch    │
+              │  open proposal  │
+              └────────┬────────┘
+                       │ no match
+                       ▼
+              ┌─────────────────┐
+              │   docs-main     │
+              │ merged proposal │
+              └────────┬────────┘
+                       │ no match
+                       ▼
+              ┌─────────────────┐
+              │     README      │
+              │ raw main text   │
+              └─────────────────┘
+```
+
+This means sequential pushes can reason from the most current known documentation state instead of always reverting to the stale README.
+
+This behavior has been tested with multiple sequential pushes and an open review PR.
+
+---
+
+# Multi-Repository Support
+
+GitSteward is repository-aware.
+
+The live webhook path obtains:
+
+```python
+repo_full_name
+installation_id
+```
+
+directly from GitHub.
+
+The same GitHub App can therefore be installed on multiple repositories without creating a separate GitSteward server for each one.
+
+Each repository receives independent vectorstore collections:
+
+```text
+Shivansh0047/RAG-Chatbot-Service::readme
+Shivansh0047/RAG-Chatbot-Service::docs-main
+Shivansh0047/RAG-Chatbot-Service::docs-branch
+
+Shivansh0047/gitsteward::readme
+Shivansh0047/gitsteward::docs-main
+Shivansh0047/gitsteward::docs-branch
+```
+
+Repository-specific installation IDs and state are carried through the workflow.
+
+Multi-repository behavior has been tested with multiple real repositories, including GitSteward analyzing its own repository.
+
+---
+
+# Preventing Self-Trigger Loops
+
+GitSteward's own commits generate GitHub push events, so loop protection is necessary.
+
+Two guards are used.
+
+### Guard 1 — only analyze `main`
+
+Pushes to:
+
+```text
+refs/heads/main
+```
+
+are eligible for analysis.
+
+For example:
+
+```text
+refs/heads/gitsteward/doc-suggestions
+```
+
+is ignored.
+
+### Guard 2 — merge-only GitSteward pushes
+
+When a GitSteward PR is merged, the resulting push to `main` may contain only:
+
+```text
+gitsteward-docs/*
+```
+
+Such pushes are not treated as new documentation-analysis runs.
+
+Instead GitSteward:
+
+```text
+reads the merged suggestion files
+        ↓
+rebuilds docs-main
+```
+
+This prevents GitSteward from reacting to its own merged output.
+
+---
+
+# Generated Pull Request Structure
+
+A typical GitSteward review branch looks like:
+
+```text
+gitsteward-docs/
+├── project-structure.md
+├── stack.md
+├── required-environment-variables.md
+├── how-it-works.md
+├── modified_gitsteward_readme.md
+└── README.md
+```
+
+### Individual suggestion file
+
+Each section proposal contains metadata such as:
+
+```yaml
+---
+source_anchor: "README.md#stack"
+source_commit: "<run-id>"
+status: "updated"
+---
+```
+
+followed by:
+
+```text
+Why flagged:
+<reason>
+
+<proposed section body>
+```
+
+### `modified_gitsteward_readme.md`
+
+A complete preview of the README with the generated section replacements applied.
+
+This allows a reviewer to see what the resulting README would look like without modifying the actual README.
+
+### `gitsteward-docs/README.md`
+
+A lightweight tracking index containing the latest status for every flagged README section.
+
+It is a **latest-status index**, not a full historical log.
+
+---
+
+# Local Setup
+
+## Prerequisites
+
+You need:
+
+- Python 3.10+
+- a GitHub App
+- a Groq API key
+- a Google Gemini API key
+- a PostgreSQL database with pgvector
+- a GitHub repository where the App is installed
+
+Neon is suitable for the PostgreSQL/pgvector database.
+
+## 1. Clone
+
+```bash
+git clone https://github.com/Shivansh0047/gitsteward.git
+cd gitsteward
+```
+
+## 2. Create a virtual environment
+
+Windows:
+
+```bash
+python -m venv venv
+venv\Scripts\activate
+```
+
+Linux/macOS:
+
+```bash
+python -m venv venv
+source venv/bin/activate
+```
+
+## 3. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+## 4. Configure environment variables
+
+Create a `.env` file containing the required credentials.
+
+Typical configuration:
+
+```env
 GITHUB_APP_ID=...
 GITHUB_APP_PRIVATE_KEY_PATH=./github-app-private-key.pem
 GITHUB_WEBHOOK_SECRET=...
-GITHUB_INSTALLATION_ID=...
-DEMO_REPO_OWNER=...
-DEMO_REPO_NAME=...
+
 GROQ_API_KEY=...
 GOOGLE_API_KEY=...
-DATABASE_URL=postgresql://...   # a free Neon or Supabase instance works
+
+DATABASE_URL=postgresql://...
 ```
 
-### 3. Install and run
+Keep private keys, API keys, and `.env` files out of source control.
+
+## 5. Configure the GitHub App
+
+The GitHub App needs:
+
+```text
+Repository permissions
+├── Contents: Read and write
+└── Pull requests: Read and write
+```
+
+Subscribe to:
+
+```text
+push
+pull_request
+```
+
+Install the App on the repositories GitSteward should watch.
+
+The live application obtains the repository's installation ID from each webhook event; you do not need to hardcode a single repository for the production path.
+
+## 6. Run locally
+
 ```bash
-pip install -r requirements.txt
 uvicorn main:app --reload
 ```
-For local development, GitHub can't reach `localhost` directly — use [smee.io](https://smee.io) as a relay:
+
+For local webhook testing, use a public webhook relay such as smee.io:
+
 ```bash
 smee --url https://smee.io/<your-channel> --target http://localhost:8000/webhook/github
 ```
 
----
-
-## Observability
-
-- `GET /runs/{run_id}/state` — the current, live state of any run, read directly from the Postgres checkpoint (no re-execution).
-- `GET /runs/{run_id}/timeline` — every checkpoint the run has passed through, in order.
-- `GET /health` — liveness check.
-
-A run's state is durable across a full server restart, mid-`waiting_approval` — this has been verified directly: a run left paused, with the server killed and restarted, returns identical state from `/state` afterward.
+Then point the GitHub App webhook URL at the relay.
 
 ---
 
-## Known limitations / deliberate scope boundaries
+# Testing
 
-- **Single repository per deployment**, currently. Multi-repo support is a planned but not-yet-built extension — it requires threading a `repo` parameter through every GitHub API call (currently hardcoded to one repo via `.env`) and resolving the correct installation ID per repo dynamically.
-- **Accepting a suggestion does not apply it to `README.md`.** Merging a GitSteward PR merges `gitsteward-docs/`'s content into `main`; a human still copies the accepted text into the real README manually. This is a deliberate boundary, not an oversight — it keeps GitSteward's write surface minimal and reviewable.
-- **The in-memory vector store is rebuilt from scratch at every server startup**, rather than persisted — a deliberate choice given Render's free-tier ephemeral disk, acceptable because it's only ever indexing one file.
-- **`bootstrap.py`** works around a native-library import-order crash reproduced on Windows; it has not yet been confirmed necessary (or unnecessary) on the Linux environment used for deployment.
+GitSteward has been tested against multiple real repositories.
+
+Important tested behaviors include:
+
+- GitHub App authentication
+- webhook HMAC verification
+- README retrieval
+- section-level RAG retrieval
+- GPT-OSS 120B reasoning
+- stale-section detection
+- documentation rewriting
+- review branch creation
+- Pull Request creation
+- reuse of an existing open GitSteward PR
+- multiple sequential pushes before review
+- human approval/rejection through the PR
+- LangGraph `interrupt()` and resume
+- Postgres-backed workflow durability
+- merge-only self-trigger protection
+- `docs-main` synchronization
+- multi-repository state isolation
+- repositories without a README
+- GitSteward analyzing its own repository
+
+A large architectural commit can produce very large LLM prompts and hit the Groq Free Plan's token-per-minute limit. This is currently an accepted limitation of the development/free-tier setup rather than a target for high-scale production handling.
 
 ---
 
-## Status
+# Observability
 
-- **Phase 0 — Foundations**: complete. GitHub App auth, signature-verified webhook receiver.
-- **Phase 1 — Mechanical pipeline**: complete (superseded by Phase 2's real reasoning; the original hardcoded lookup table, `doc_rules.py`, has been removed).
-- **Phase 2 — LLM + RAG**: complete. Verified against multiple real semantic changes to the demo repository.
-- **Phase 3 — LangGraph + Postgres persistence**: complete. Human-in-the-loop pause/resume verified for both approval and rejection paths, and across a real server restart.
-- **Phase 4 — Test branch** (sandboxed test execution via GitHub Actions, triggered on `pull_request` events): deferred, not started.
-- **Phase 5 — Deployment**: in progress.
+The application exposes:
+
+```text
+GET /health
+```
+
+Returns a basic liveness response.
+
+For a specific run:
+
+```text
+GET /runs/{run_id}/state?repo=<repo>
+```
+
+returns the current persisted workflow state.
+
+And:
+
+```text
+GET /runs/{run_id}/timeline?repo=<repo>
+```
+
+returns the checkpoint history of the run.
+
+These endpoints are intended primarily for development and demonstration.
+
+---
+
+# Deliberate Scope Boundaries
+
+GitSteward is designed as a **portfolio/interview project**, not as a high-scale production service.
+
+The current target is a small number of repositories, such as 2–3 repositories, rather than hundreds of concurrent installations.
+
+The project intentionally does not currently include:
+
+- background job queues
+- distributed workers
+- horizontal scaling
+- enterprise-grade concurrency handling
+- automatic application of accepted documentation into the real `README.md`
+- automated merging of GitSteward PRs
+- the planned automated code-test branch
+
+These can be explored later if the project grows.
+
+---
+
+# Current Model Stack
+
+### LLM
+
+```text
+Groq
+openai/gpt-oss-120b
+```
+
+Used for:
+
+- stale-section reasoning
+- documentation rewriting
+
+### Embeddings
+
+```text
+Google Gemini
+gemini-embedding-001
+```
+
+Used for:
+
+- README indexing
+- semantic retrieval
+- pgvector document storage
+- proposal store synchronization
+
+### Vector Store
+
+```text
+PostgreSQL + pgvector
+```
+
+Three logical collections are maintained per repository:
+
+```text
+readme
+docs-branch
+docs-main
+```
+
+### Application
+
+```text
+FastAPI
+LangGraph
+LangChain
+PyGithub
+PostgreSQL
+```
+
+---
+
+# Project Status
+
+### Completed
+
+- GitHub App authentication
+- Signature-verified webhook receiver
+- Section-level README parsing
+- RAG-based candidate retrieval
+- Gemini embedding integration
+- GPT-OSS 120B migration
+- LLM-based stale-section detection
+- LLM-based documentation rewriting
+- GitHub review branch workflow
+- Batched multi-file commits
+- Human-in-the-loop review using LangGraph `interrupt()`
+- PostgreSQL-backed checkpointing
+- PR/run tracking
+- Multi-repository support
+- Repository-specific vectorstores
+- Three-tier documentation resolution
+- Self-trigger protection
+- `docs-main` synchronization
+- README-missing graceful handling
+- Observability endpoints
+- Real end-to-end testing on multiple repositories
+
+### Deferred
+
+**Test branch / automated code verification**
+
+A future phase is planned around:
+
+```text
+pull_request event
+        ↓
+GitHub Actions sandbox
+        ↓
+run tests
+        ↓
+diagnose failures
+        ↓
+retry
+        ↓
+combine test + documentation results
+```
+
+This is intentionally separate from the current documentation workflow.
+
+### Current deployment phase
+
+**Phase 5 — Render deployment**
+
+The next major step is deploying the FastAPI service to Render and configuring the GitHub App webhook to use the deployed URL.
+
+The PostgreSQL/pgvector database remains external, with Neon as the intended database provider.
+
+---
+
+# Project Roadmap
+
+```text
+Phase 0
+GitHub App + webhook foundation
+        ✅
+
+Phase 1
+Initial documentation pipeline
+        ✅
+
+Phase 2
+LLM + RAG reasoning
+        ✅
+
+Phase 3
+LangGraph + PostgreSQL durability + HITL
+        ✅
+
+Phase 4
+Automated test branch
+        ⏸ Deferred
+
+Phase 5
+Render deployment + live demo
+        🚧 Current
+```
+
+---
+
+# Demo Scenario
+
+A useful GitSteward demonstration is:
+
+```text
+1. Make a real code change.
+2. Push it to main.
+3. GitHub sends the webhook.
+4. GitSteward detects stale README sections.
+5. GitSteward creates/updates its review PR.
+6. Human reviews the proposed documentation.
+7. Human merges or closes the PR.
+8. GitSteward resumes from its PostgreSQL checkpoint.
+9. A merge-only docs push updates docs-main.
+10. The real README remains untouched.
+```
+
+The same workflow can then be demonstrated on a second repository to show multi-repository isolation.
+
+---
+
+# Why GitSteward?
+
+GitSteward is intentionally built around a simple principle:
+
+> **AI can propose documentation changes, but humans remain responsible for approving them.**
+
+The interesting part is not simply using an LLM to rewrite Markdown. The project combines:
+
+- GitHub App authentication
+- webhook-driven automation
+- semantic retrieval
+- persistent vector memory
+- LangGraph workflows
+- PostgreSQL checkpointing
+- human-in-the-loop execution
+- multi-repository support
+- GitHub Pull Requests as the review surface
+
+The result is an agent that can continuously reason about whether a codebase and its documentation are still telling the same story — while keeping the final decision in human hands.
