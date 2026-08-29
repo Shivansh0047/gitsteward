@@ -9,6 +9,5 @@ noqa: F401 -> tells Python linting tools like Flake8 and Ruff to ignore an "impo
 """
 import langchain_text_splitters  # noqa: F401
 import github  # noqa: F401
-import langchain_chroma  # noqa: F401
 import langchain_google_genai  # noqa: F401
 import langchain_groq  # noqa: F401
