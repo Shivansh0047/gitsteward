@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <meta
+        name="description"
+        content="GitSteward is an AI-powered GitHub App that detects outdated README documentation and proposes updates through human-reviewed pull requests."
+    >
+
+    <meta name="theme-color" content="#0b1020">
+
+    <title>GitSteward — Documentation That Stays in Sync</title>
+
+    <style>
+        :root {
+            --bg: #0b1020;
+            --surface: #11182b;
+            --surface-light: #172139;
+            --border: #28344e;
+            --text: #edf2ff;
+            --muted: #a0aec8;
+            --green: #53e0a1;
+            --blue: #81a9ff;
+            --purple: #b7a0ff;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system,
+                BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.7;
+        }
+
+        a {
+            color: inherit;
+            text-decoration: none;
+        }
+
+        .container {
+            width: min(1100px, 90%);
+            margin: 0 auto;
+        }
+
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 24px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .brand {
+            font-size: 1.25rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+        }
+
+        .brand span {
+            color: var(--green);
+        }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            color: var(--muted);
+            font-size: 0.92rem;
+        }
+
+        .nav-links a:hover {
+            color: var(--green);
+        }
+
+        .hero {
+            padding: 100px 0 85px;
+            text-align: center;
+            background:
+                radial-gradient(
+                    ellipse at top,
+                    rgba(85, 112, 255, 0.15),
+                    transparent 65%
+                );
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 9px;
+            padding: 7px 13px;
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            color: var(--green);
+            background: rgba(83, 224, 161, 0.06);
+            font-size: 0.82rem;
+            margin-bottom: 26px;
+        }
+
+        .dot {
+            height: 8px;
+            width: 8px;
+            border-radius: 50%;
+            background: var(--green);
+            box-shadow: 0 0 12px rgba(83, 224, 161, 0.65);
+        }
+
+        h1 {
+            max-width: 850px;
+            margin: 0 auto 22px;
+            font-size: clamp(2.5rem, 6vw, 4.6rem);
+            line-height: 1.12;
+            letter-spacing: -2px;
+        }
+
+        h1 span {
+            background: linear-gradient(90deg, var(--green), var(--blue));
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .hero p {
+            max-width: 690px;
+            margin: 0 auto;
+            color: var(--muted);
+            font-size: 1.08rem;
+        }
+
+        .actions {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 14px;
+            margin-top: 32px;
+        }
+
+        .button {
+            display: inline-block;
+            padding: 12px 21px;
+            border-radius: 9px;
+            font-weight: 700;
+            font-size: 0.94rem;
+            transition: transform 0.2s, opacity 0.2s;
+        }
+
+        .button:hover {
+            transform: translateY(-2px);
+            opacity: 0.9;
+        }
+
+        .primary {
+            background: var(--green);
+            color: #07150f;
+        }
+
+        .secondary {
+            border: 1px solid var(--border);
+            background: var(--surface);
+        }
+
+        section {
+            padding: 65px 0;
+        }
+
+        .section-heading {
+            text-align: center;
+            margin-bottom: 38px;
+        }
+
+        .eyebrow {
+            color: var(--green);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-size: 0.75rem;
+            font-weight: 800;
+        }
+
+        h2 {
+            font-size: clamp(1.8rem, 4vw, 2.6rem);
+            line-height: 1.25;
+            margin-top: 10px;
+            letter-spacing: -0.8px;
+        }
+
+        .section-heading p {
+            color: var(--muted);
+            max-width: 660px;
+            margin: 12px auto 0;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 18px;
+        }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 15px;
+            padding: 25px;
+        }
+
+        .card-icon {
+            display: inline-grid;
+            place-items: center;
+            width: 42px;
+            height: 42px;
+            margin-bottom: 16px;
+            border-radius: 11px;
+            background: var(--surface-light);
+            font-size: 1.25rem;
+        }
+
+        .card h3 {
+            margin-bottom: 9px;
+            font-size: 1.08rem;
+        }
+
+        .card p {
+            color: var(--muted);
+            font-size: 0.94rem;
+        }
+
+        .workflow {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 12px;
+        }
+
+        .step {
+            position: relative;
+            padding: 22px 15px;
+            text-align: center;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 13px;
+        }
+
+        .step-number {
+            display: inline-grid;
+            place-items: center;
+            width: 34px;
+            height: 34px;
+            margin-bottom: 13px;
+            border-radius: 50%;
+            color: var(--green);
+            background: rgba(83, 224, 161, 0.1);
+            font-weight: 800;
+        }
+
+        .step h3 {
+            font-size: 0.95rem;
+            margin-bottom: 7px;
+        }
+
+        .step p {
+            color: var(--muted);
+            font-size: 0.82rem;
+        }
+
+        .stack {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 11px;
+        }
+
+        .tag {
+            border: 1px solid var(--border);
+            background: var(--surface);
+            border-radius: 8px;
+            padding: 9px 15px;
+            color: #d4def5;
+            font-size: 0.9rem;
+        }
+
+        .usage {
+            max-width: 820px;
+            margin: 0 auto;
+        }
+
+        .usage-list {
+            display: grid;
+            gap: 15px;
+            counter-reset: usage;
+        }
+
+        .usage-item {
+            display: flex;
+            gap: 17px;
+            padding: 20px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+        }
+
+        .usage-item .card-icon {
+            flex-shrink: 0;
+            margin: 0;
+        }
+
+        .usage-item h3 {
+            margin-bottom: 5px;
+            font-size: 1rem;
+        }
+
+        .usage-item p {
+            color: var(--muted);
+            font-size: 0.92rem;
+        }
+
+        .notice {
+            max-width: 820px;
+            margin: 25px auto 0;
+            padding: 23px;
+            border: 1px solid rgba(129, 169, 255, 0.3);
+            background: rgba(129, 169, 255, 0.06);
+            border-radius: 13px;
+        }
+
+        .notice h3 {
+            margin-bottom: 8px;
+        }
+
+        .notice p {
+            color: var(--muted);
+            font-size: 0.93rem;
+        }
+
+        .notice a {
+            color: var(--blue);
+            text-decoration: underline;
+            text-underline-offset: 3px;
+        }
+
+        .cta {
+            text-align: center;
+            padding: 45px 25px;
+            border: 1px solid var(--border);
+            background:
+                linear-gradient(
+                    135deg,
+                    rgba(83, 224, 161, 0.06),
+                    rgba(129, 169, 255, 0.09)
+                );
+            border-radius: 20px;
+        }
+
+        .cta p {
+            color: var(--muted);
+            max-width: 600px;
+            margin: 12px auto 0;
+        }
+
+        footer {
+            margin-top: 70px;
+            padding: 28px 0;
+            border-top: 1px solid var(--border);
+            color: var(--muted);
+            font-size: 0.85rem;
+        }
+
+        .footer-content {
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        footer a {
+            color: var(--green);
+        }
+
+        @media (max-width: 850px) {
+            .grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .workflow {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .step:last-child {
+                grid-column: 1 / -1;
+            }
+        }
+
+        @media (max-width: 600px) {
+            nav {
+                align-items: flex-start;
+                gap: 15px;
+                flex-direction: column;
+            }
+
+            .nav-links {
+                flex-wrap: wrap;
+                gap: 15px;
+            }
+
+            .hero {
+                padding: 70px 0;
+            }
+
+            h1 {
+                letter-spacing: -1px;
+            }
+
+            .grid,
+            .workflow {
+                grid-template-columns: 1fr;
+            }
+
+            .step:last-child {
+                grid-column: auto;
+            }
+
+            .footer-content {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <nav>
+            <a class="brand" href="/">Git<span>Steward</span></a>
+
+            <div class="nav-links">
+                <a href="#features">Features</a>
+                <a href="#workflow">Workflow</a>
+                <a href="#usage">How to use</a>
+                <a href="https://github.com/Shivansh0047/gitsteward"
+                   target="_blank" rel="noopener noreferrer">
+                    GitHub ↗
+                </a>
+            </div>
+        </nav>
+
+        <header class="hero">
+            <div class="badge">
+                <span class="dot"></span>
+                AI Documentation Agent
+            </div>
+
+            <h1>
+                Your code evolves.<br>
+                <span>Your documentation should too.</span>
+            </h1>
+
+            <p>
+                GitSteward is a GitHub App that detects potentially outdated
+                README sections after code changes and proposes documentation
+                updates through reviewable pull requests — keeping developers
+                in control of every change.
+            </p>
+
+            <div class="actions">
+                <a class="button primary"
+                   href="https://github.com/Shivansh0047/gitsteward"
+                   target="_blank" rel="noopener noreferrer">
+                    Explore the Repository ↗
+                </a>
+
+                <a class="button secondary" href="#workflow">
+                    See How It Works ↓
+                </a>
+            </div>
+        </header>
+
+        <section id="features">
+            <div class="section-heading">
+                <div class="eyebrow">Why GitSteward?</div>
+                <h2>Documentation maintenance, automated.</h2>
+                <p>
+                    Reduce the gap between implementation and documentation
+                    without giving an AI agent unchecked control over your repo.
+                </p>
+            </div>
+
+            <div class="grid">
+                <article class="card">
+                    <div class="card-icon">⌕</div>
+                    <h3>Context-Aware Detection</h3>
+                    <p>
+                        Uses code diffs, semantic retrieval and an LLM to
+                        identify README sections that may no longer reflect
+                        the implementation.
+                    </p>
+                </article>
+
+                <article class="card">
+                    <div class="card-icon">✦</div>
+                    <h3>AI-Powered Rewriting</h3>
+                    <p>
+                        Generates proposed section updates using the relevant
+                        code changes and existing documentation as context.
+                    </p>
+                </article>
+
+                <article class="card">
+                    <div class="card-icon">⑂</div>
+                    <h3>Human-in-the-Loop</h3>
+                    <p>
+                        Publishes suggestions on a dedicated documentation
+                        branch and opens a pull request for human review.
+                        GitSteward does not merge its own proposals.
+                    </p>
+                </article>
+            </div>
+        </section>
+
+        <section id="workflow">
+            <div class="section-heading">
+                <div class="eyebrow">The workflow</div>
+                <h2>From code push to reviewed PR</h2>
+                <p>
+                    An event-driven pipeline that connects GitHub,
+                    retrieval-augmented analysis and controlled documentation
+                    updates.
+                </p>
+            </div>
+
+            <div class="workflow">
+                <article class="step">
+                    <div class="step-number">1</div>
+                    <h3>Push</h3>
+                    <p>A commit lands on the main branch.</p>
+                </article>
+
+                <article class="step">
+                    <div class="step-number">2</div>
+                    <h3>Analyze</h3>
+                    <p>GitSteward examines the changed code.</p>
+                </article>
+
+                <article class="step">
+                    <div class="step-number">3</div>
+                    <h3>Detect</h3>
+                    <p>RAG and an LLM identify stale sections.</p>
+                </article>
+
+                <article class="step">
+                    <div class="step-number">4</div>
+                    <h3>Propose</h3>
+                    <p>Updated documentation is committed to a review branch.</p>
+                </article>
+
+                <article class="step">
+                    <div class="step-number">5</div>
+                    <h3>Review</h3>
+                    <p>A pull request awaits a human decision.</p>
+                </article>
+            </div>
+        </section>
+
+        <section>
+            <div class="section-heading">
+                <div class="eyebrow">Under the hood</div>
+                <h2>Built with modern AI infrastructure</h2>
+            </div>
+
+            <div class="stack">
+                <span class="tag">Python</span>
+                <span class="tag">FastAPI</span>
+                <span class="tag">LangGraph</span>
+                <span class="tag">LangChain</span>
+                <span class="tag">Groq · GPT-OSS 120B</span>
+                <span class="tag">Google Gemini Embeddings</span>
+                <span class="tag">PostgreSQL</span>
+                <span class="tag">pgvector</span>
+                <span class="tag">GitHub App</span>
+                <span class="tag">Render</span>
+            </div>
+        </section>
+
+        <section id="usage">
+            <div class="section-heading">
+                <div class="eyebrow">Getting started</div>
+                <h2>How to use GitSteward</h2>
+                <p>
+                    GitSteward is an event-driven GitHub App, not a
+                    public chatbot. Its analysis begins when a configured
+                    repository receives a qualifying push.
+                </p>
+            </div>
+
+            <div class="usage">
+                <div class="usage-list">
+                    <article class="usage-item">
+                        <div class="card-icon">1</div>
+                        <div>
+                            <h3>Request repository access</h3>
+                            <p>
+                                Contact the repository owner to request
+                                access to the GitSteward GitHub App and
+                                confirm whether your repository can be
+                                configured for testing.
+                            </p>
+                        </div>
+                    </article>
+
+                    <article class="usage-item">
+                        <div class="card-icon">2</div>
+                        <div>
+                            <h3>Install and authorize the GitHub App</h3>
+                            <p>
+                                The repository owner must ensure the app
+                                is installed on the repository with the
+                                required permissions and webhook events.
+                            </p>
+                        </div>
+                    </article>
+
+                    <article class="usage-item">
+                        <div class="card-icon">3</div>
+                        <div>
+                            <h3>Push a code change to main</h3>
+                            <p>
+                                After setup, push a commit to the main
+                                branch. GitSteward analyzes the changed
+                                files and retrieves relevant README context.
+                            </p>
+                        </div>
+                    </article>
+
+                    <article class="usage-item">
+                        <div class="card-icon">4</div>
+                        <div>
+                            <h3>Review the generated pull request</h3>
+                            <p>
+                                If potentially stale documentation is
+                                detected, inspect the proposed changes
+                                in the GitHub pull request and decide
+                                whether to accept them.
+                            </p>
+                        </div>
+                    </article>
+                </div>
+
+                <div class="notice">
+                    <h3>🔐 Access &amp; credentials</h3>
+                    <p>
+                        GitSteward requires server-side configuration,
+                        including GitHub App credentials and AI provider
+                        API keys. These are not publicly exposed.
+                        For authorized testing, app access, or setup
+                        assistance, please contact the repository owner
+                        through the
+                        <a href="https://github.com/Shivansh0047"
+                           target="_blank" rel="noopener noreferrer">
+                            owner's GitHub profile
+                        </a>.
+                        Never share personal passwords, API keys, or
+                        private credentials in a public issue.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <section>
+            <div class="cta">
+                <div class="eyebrow">Explore the project</div>
+                <h2>See the implementation on GitHub.</h2>
+                <p>
+                    Explore the source code, architecture, and implementation
+                    details behind GitSteward.
+                </p>
+
+                <div class="actions">
+                    <a class="button primary"
+                       href="https://github.com/Shivansh0047/gitsteward"
+                       target="_blank" rel="noopener noreferrer">
+                        View Source Code ↗
+                    </a>
+
+                    <a class="button secondary"
+                       href="/health">
+                        Check Service Health
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <footer>
+            <div class="footer-content">
+                <span>
+                    © 2026 GitSteward · Built as an AI engineering project.
+                </span>
+
+                <span>
+                    <a href="https://github.com/Shivansh0047/gitsteward"
+                       target="_blank" rel="noopener noreferrer">
+                        Source Code
+                    </a>
+                    &nbsp;·&nbsp;
+                    <a href="/health">Health</a>
+                    &nbsp;·&nbsp;
+                    <a href="/docs">API Docs</a>
+                </span>
+            </div>
+        </footer>
+    </div>
+</body>
+</html>

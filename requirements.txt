@@ -17,3 +17,5 @@ langchain-text-splitters
 
 psycopg[binary]
 sqlalchemy
+
+jinja2

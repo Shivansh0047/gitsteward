@@ -1,4 +1,9 @@
 import bootstrap # force the correct order of imporitng which could break the code
+from pathlib import Path
+
+from fastapi import Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 
 from fastapi import FastAPI
 import logging
@@ -25,9 +30,24 @@ async def lifespan(app: FastAPI):
     # (anything after yield would run on shutdown — nothing needed here yet)
 
 app = FastAPI(title="GitSteward", lifespan=lifespan)
+
+BASE_DIR = Path(__file__).resolve().parent
+
+templates = Jinja2Templates(
+    directory=str(BASE_DIR / "templates")
+)
+
 app.include_router(webhooks_router) # merges the routes we defined in webhooks.py into our main app
 app.include_router(observability_router) # include the observability router
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+@app.get("/", response_class=HTMLResponse)
+async def homepage(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={}
+    )
